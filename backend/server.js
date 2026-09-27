@@ -1,5 +1,5 @@
-const pool = require("./db");
-const WebSocket = require("ws");g
+const pool = require("./lib/db");
+const WebSocket = require("ws");
 
 pool.query("SELECT NOW()")
   .then(result => console.log(result.rows))
