@@ -112,10 +112,17 @@ function MarkerItem({ facility, isActive, onActivate }) {
       icon={buildMarkerIcon(facility.type, isActive)}
       eventHandlers={{ click: () => onActivate(facility) }}
     >
-      <Popup closeButton={false} offset={[0, -18]} autoPan>
-        <span className="block whitespace-nowrap text-[13px] font-semibold text-slate-900">
-          {facility.name}
-        </span>
+      <Popup
+        closeButton={false}
+        offset={[0, -30]}
+        autoPan
+        maxWidth={260}
+        minWidth={230}
+      >
+        <FacilityPreviewCard
+          facility={facility}
+          onOpen={() => onActivate(facility)}
+        />
       </Popup>
     </Marker>
   );
@@ -174,4 +181,78 @@ function MapEvents({ onBackgroundClick, onPickLocation }) {
     },
   });
   return null;
+}
+
+function FacilityPreviewCard({ facility, onOpen }) {
+  const queue = facility.queue ?? {
+    congestion: 'unknown',
+    avgWaitMinutes: null,
+    sampleSize: 0,
+  };
+  const distance = Number.isFinite(facility.distanceKm)
+    ? `${facility.distanceKm.toFixed(1)} km`
+    : null;
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      className="block w-full cursor-pointer text-left"
+    >
+      <p className="text-sm font-semibold leading-snug text-slate-900">
+        {facility.name}
+      </p>
+
+      <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+        <span>{facility.type}</span>
+        {distance && (
+          <>
+            <span aria-hidden>·</span>
+            <span>{distance}</span>
+          </>
+        )}
+      </div>
+
+      <div className="mt-2 flex items-center gap-2 border-t border-slate-100 pt-2">
+        <QueuePill level={queue.congestion} />
+        <span className="text-xs text-slate-600">
+          {queue.avgWaitMinutes != null
+            ? `~${queue.avgWaitMinutes} min wait`
+            : 'No recent reports'}
+        </span>
+      </div>
+
+      <p className="mt-2 text-[11px] font-medium text-blue-600">
+        Tap the pin again for more →
+      </p>
+    </button>
+  );
+}
+
+function QueuePill({ level }) {
+  const styles = {
+    low: 'bg-emerald-100 text-emerald-700',
+    moderate: 'bg-amber-100 text-amber-700',
+    high: 'bg-red-100 text-red-700',
+    unknown: 'bg-slate-100 text-slate-600',
+  };
+  const labels = {
+    low: 'Low',
+    moderate: 'Moderate',
+    high: 'High',
+    unknown: 'Unknown',
+  };
+  const cls = styles[level] ?? styles.unknown;
+  const label = labels[level] ?? labels.unknown;
+
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${cls}`}
+    >
+      {label}
+    </span>
+  );
 }
