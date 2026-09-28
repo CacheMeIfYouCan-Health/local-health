@@ -88,3 +88,63 @@ export async function createQueueReport(input) {
   ]);
   return rows[0];
 }
+
+const QUEUE_SUMMARY_SQL = `
+  SELECT facility_id, congestion, wait_minutes, created_at
+  FROM queue_reports
+  WHERE facility_id = ANY($1::int[])
+    AND created_at > NOW() - INTERVAL '3 hours'
+  ORDER BY facility_id, created_at DESC;
+`;
+
+export async function findQueueSummariesFor(facilityIds) {
+  if (!facilityIds.length) return new Map();
+
+  const { rows } = await query(QUEUE_SUMMARY_SQL, [facilityIds]);
+
+  const grouped = new Map();
+  for (const row of rows) {
+    if (!grouped.has(row.facility_id)) grouped.set(row.facility_id, []);
+    grouped.get(row.facility_id).push(row);
+  }
+
+  const summaries = new Map();
+  for (const [id, reports] of grouped.entries()) {
+    summaries.set(id, summariseQueue(reports));
+  }
+  return summaries;
+}
+
+function summariseQueue(reports) {
+  if (reports.length === 0) {
+    return {
+      congestion: 'unknown',
+      sampleSize: 0,
+      avgWaitMinutes: null,
+      lastReportedAt: null,
+    };
+  }
+
+  const weights = { low: 1, moderate: 2, high: 3 };
+  const scored = reports.filter((r) => r.congestion);
+  const waits = reports
+    .filter((r) => Number.isFinite(r.wait_minutes))
+    .map((r) => r.wait_minutes);
+
+  let congestion = 'unknown';
+  if (scored.length > 0) {
+    const avg = scored.reduce((s, r) => s + weights[r.congestion], 0) / scored.length;
+    congestion = avg < 1.5 ? 'low' : avg < 2.5 ? 'moderate' : 'high';
+  }
+
+  const avgWaitMinutes = waits.length
+    ? Math.round(waits.reduce((s, w) => s + w, 0) / waits.length)
+    : null;
+
+  return {
+    congestion,
+    sampleSize: reports.length,
+    avgWaitMinutes,
+    lastReportedAt: reports[0].created_at,
+  };
+}
