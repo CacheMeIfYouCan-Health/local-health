@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-
+import RadiusControl from '@components/map/RadiusControl';
 import { fetchNearbyFacilities } from '@lib/api';
 
 const DEFAULT_RADIUS_KM = 15;
@@ -34,6 +34,7 @@ export default function FacilityMap() {
   const [location, setLocation] = useState(null); // { lat, lng, accuracy, source }
   const [facilities, setFacilities] = useState([]);
   const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
+  const [debouncedRadius, setDebouncedRadius] = useState(DEFAULT_RADIUS_KM);
   const [meta, setMeta] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -75,6 +76,11 @@ export default function FacilityMap() {
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 }
     );
   }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedRadius(radiusKm), 400);
+    return () => clearTimeout(t);
+  }, [radiusKm]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +126,7 @@ export default function FacilityMap() {
     setError(null);
     setActive(null);
 
-fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm })      .then((payload) => {
+fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: debouncedRadius })      .then((payload) => {
         if (cancelled) return;
         setFacilities(payload.facilities);
         setMeta(payload.meta);
@@ -136,7 +142,7 @@ fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm })      .
     return () => {
       cancelled = true;
     };
-  }, [location, radiusKm, setActive]);
+  }, [location, debouncedRadius, setActive]);
 
   /* ---------------------------------------------------------------
    * 3. Marker interaction
@@ -179,7 +185,7 @@ fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm })      .
     <div className="fixed inset-0 isolate z-0">
       <FacilityMapView
         origin={location}
-        radiusKm={radiusKm}
+        radiusKm={debouncedRadius}
         facilities={facilities}
         activeId={activeId}
         canPickOnMap={canPickOnMap}
@@ -201,6 +207,14 @@ fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm })      .
             ? requestLocation()
             : undefined
         }
+      />
+
+      <RadiusControl
+        value={radiusKm}
+        min={MIN_RADIUS_KM}
+        max={MAX_RADIUS_KM}
+        loading={loading}
+        onChange={setRadiusKm}
       />
 
       {showGate && (
