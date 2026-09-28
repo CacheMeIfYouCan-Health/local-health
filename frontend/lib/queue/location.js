@@ -17,7 +17,7 @@ function distanceMeters(a, b) {
 function getCurrentPosition(options) {
   return new Promise((resolve, reject) => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      reject(new Error('geolocation unavailable'));
+      reject({ code: 'unsupported' });
       return;
     }
     navigator.geolocation.getCurrentPosition(resolve, reject, options);
@@ -25,27 +25,40 @@ function getCurrentPosition(options) {
 }
 
 /**
- * Returns ONLY a boolean.
+ * Returns { verified: boolean, reason: string }.
  *
- * The browser fix is compared against facility.coords inside this function
- * and then discarded. Coordinates are never returned, never logged, and
- * never included in a report payload.
- *
- * Returns false on: no coords, no geolocation API, permission denied,
- * timeout, or out-of-range. There is no "unknown" state.
+ * `reason` is for local UI only — never sent to the backend.
+ * The report payload still contains only `locationVerified: boolean`.
  */
-export async function isNearFacility(facility, radiusMeters) {
+export async function checkFacilityProximity(facility, radiusMeters) {
   const coords = facility?.coords;
-  if (!coords?.latitude || !coords?.longitude) return false;
+  if (!coords?.latitude || !coords?.longitude) {
+    return { verified: false, reason: 'no_facility_coords' };
+  }
 
   try {
     const position = await getCurrentPosition({
-      enableHighAccuracy: false,
-      timeout: 8000,
-      maximumAge: 30000,
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
     });
-    return distanceMeters(position.coords, coords) <= radiusMeters;
-  } catch {
-    return false;
+    const meters = distanceMeters(position.coords, coords);
+    return meters <= radiusMeters
+      ? { verified: true, reason: 'within_range' }
+      : { verified: false, reason: 'out_of_range' };
+  } catch (err) {
+    // GeolocationPositionError: 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
+    if (err?.code === 1) return { verified: false, reason: 'permission_denied' };
+    if (err?.code === 2) return { verified: false, reason: 'unavailable' };
+    if (err?.code === 3) return { verified: false, reason: 'timeout' };
+    if (err?.code === 'unsupported')
+      return { verified: false, reason: 'unsupported' };
+    return { verified: false, reason: 'unknown' };
   }
+}
+
+// Backwards-compatible boolean helper if anything else imports it.
+export async function isNearFacility(facility, radiusMeters) {
+  const { verified } = await checkFacilityProximity(facility, radiusMeters);
+  return verified;
 }

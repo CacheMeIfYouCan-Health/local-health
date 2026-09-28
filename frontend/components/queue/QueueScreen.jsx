@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import useQueueSession from '@lib/useQueueSession';
+import useQueueSession from '@lib/queue/useQueueSession';
 import QueueReportForm from './QueueReportForm';
 import { formatDuration, formatClock } from '@lib/queue/time';
 import { queueTypeLabel, peopleAheadLabel } from '@lib/queue/queueConstants';
