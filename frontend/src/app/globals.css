@@ -2,3 +2,8 @@
 
 @source "../../components";
 @source "../../lib";
+
+.facility-marker {
+  background: transparent !important;
+  border: none !important;
+}
