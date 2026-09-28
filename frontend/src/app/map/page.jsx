@@ -6,6 +6,10 @@ import dynamic from 'next/dynamic';
 
 import { fetchNearbyFacilities } from '@lib/api';
 
+const DEFAULT_RADIUS_KM = 15;
+const MIN_RADIUS_KM = 1;
+const MAX_RADIUS_KM = 50;
+
 // Leaflet touches `window`, so the map is client-only.
 const FacilityMapView = dynamic(() => import('@components/map/FacilityMapView'), {
   ssr: false,
@@ -29,6 +33,7 @@ export default function FacilityMap() {
   const [permission, setPermission] = useState('checking');
   const [location, setLocation] = useState(null); // { lat, lng, accuracy, source }
   const [facilities, setFacilities] = useState([]);
+  const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
   const [meta, setMeta] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -115,8 +120,7 @@ export default function FacilityMap() {
     setError(null);
     setActive(null);
 
-    fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: 15 })
-      .then((payload) => {
+fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm })      .then((payload) => {
         if (cancelled) return;
         setFacilities(payload.facilities);
         setMeta(payload.meta);
@@ -132,7 +136,7 @@ export default function FacilityMap() {
     return () => {
       cancelled = true;
     };
-  }, [location, setActive]);
+  }, [location, radiusKm, setActive]);
 
   /* ---------------------------------------------------------------
    * 3. Marker interaction
@@ -168,11 +172,14 @@ export default function FacilityMap() {
     permission === 'unsupported';
 
   const canPickOnMap = permission === 'denied' || permission === 'unavailable';
+  const MIN_RADIUS_KM = 1;
+  const MAX_RADIUS_KM = 50; 
 
   return (
     <div className="fixed inset-0 isolate z-0">
       <FacilityMapView
         origin={location}
+        radiusKm={radiusKm}
         facilities={facilities}
         activeId={activeId}
         canPickOnMap={canPickOnMap}
