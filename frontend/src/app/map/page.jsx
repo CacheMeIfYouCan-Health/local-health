@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import RadiusControl from '@components/map/RadiusControl';
 import { fetchNearbyFacilities } from '@lib/api';
+import MapHint from '@components/map/MapHint';
 
 const DEFAULT_RADIUS_KM = 15;
 const MIN_RADIUS_KM = 1;
@@ -203,10 +204,18 @@ fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: debounce
         origin={location}
         onRequestLocation={requestLocation}
         onRecenter={() =>
-          location?.source === 'device'
-            ? requestLocation()
-            : undefined
+          location?.source === 'device' ? requestLocation() : undefined
         }
+      />
+
+      <MapHint state={activeId ? 'selected' : 'idle'} />
+
+      <RadiusControl
+        value={radiusKm}
+        min={MIN_RADIUS_KM}
+        max={MAX_RADIUS_KM}
+        loading={loading}
+        onChange={setRadiusKm}
       />
 
       <RadiusControl
