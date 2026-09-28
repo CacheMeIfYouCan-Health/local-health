@@ -1,0 +1,375 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
+
+import { fetchNearbyFacilities } from '@lib/api';
+
+// Leaflet touches `window`, so the map is client-only.
+const FacilityMapView = dynamic(() => import('@components/map/FacilityMapView'), {
+  ssr: false,
+  loading: () => <MapSkeleton message="Loading map…" />,
+});
+
+/* =================================================================
+ * Location permission states
+ *   checking     -> asking the Permissions API
+ *   prompt       -> browser will ask; waiting on the user's click
+ *   requesting   -> native permission dialog is open
+ *   granted      -> we have a fix
+ *   denied       -> user blocked location; manual pick enabled
+ *   unavailable  -> device could not produce a fix (timeout, GPS off)
+ *   unsupported  -> no geolocation API at all
+ * =============================================================== */
+
+export default function FacilityMap() {
+  const router = useRouter();
+
+  const [permission, setPermission] = useState('checking');
+  const [location, setLocation] = useState(null); // { lat, lng, accuracy, source }
+  const [facilities, setFacilities] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [activeId, setActiveId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const activeIdRef = useRef(null);
+
+  const setActive = useCallback((id) => {
+    activeIdRef.current = id;
+    setActiveId(id);
+  }, []);
+
+  /* ---------------------------------------------------------------
+   * 1. Ask the browser what it already knows about our permission
+   * ------------------------------------------------------------- */
+  const requestLocation = useCallback(() => {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      setPermission('unsupported');
+      return;
+    }
+
+    setPermission('requesting');
+    setError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          source: 'device',
+        });
+        setPermission('granted');
+      },
+      (err) => {
+        // 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
+        setPermission(err.code === 1 ? 'denied' : 'unavailable');
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 }
+    );
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+        if (!cancelled) setPermission('unsupported');
+        return;
+      }
+
+      try {
+        const status = await navigator.permissions?.query({ name: 'geolocation' });
+        if (cancelled) return;
+
+        if (status?.state === 'granted') {
+          requestLocation();
+          return;
+        }
+        if (status?.state === 'denied') {
+          setPermission('denied');
+          return;
+        }
+      } catch {
+        // Permissions API not supported (Safari < 16). Fall through to the prompt.
+      }
+
+      if (!cancelled) setPermission('prompt');
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestLocation]);
+
+  /* ---------------------------------------------------------------
+   * 2. Fetch facilities whenever the origin changes
+   * ------------------------------------------------------------- */
+  useEffect(() => {
+    if (!location) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setActive(null);
+
+    fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: 15 })
+      .then((payload) => {
+        if (cancelled) return;
+        setFacilities(payload.facilities);
+        setMeta(payload.meta);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [location, setActive]);
+
+  /* ---------------------------------------------------------------
+   * 3. Marker interaction
+   *    first tap  -> bubble with the facility name
+   *    second tap -> facility detail page
+   * ------------------------------------------------------------- */
+  const handleMarkerActivate = useCallback(
+    (facility) => {
+      if (activeIdRef.current === facility.id) {
+        router.push(`/facilities/${facility.id}`);
+        return;
+      }
+      setActive(facility.id);
+    },
+    [router, setActive]
+  );
+
+  /* Manual origin when the device location is blocked or unusable */
+  const handleManualPick = useCallback(
+    ({ lat, lng }) => {
+      setLocation({ lat, lng, accuracy: null, source: 'manual' });
+      setPermission('granted');
+    },
+    []
+  );
+
+  const showGate =
+    permission === 'checking' ||
+    permission === 'prompt' ||
+    permission === 'requesting' ||
+    permission === 'denied' ||
+    permission === 'unavailable' ||
+    permission === 'unsupported';
+
+  const canPickOnMap = permission === 'denied' || permission === 'unavailable';
+
+  return (
+    <div className="fixed inset-0 isolate z-0">
+      <FacilityMapView
+        origin={location}
+        facilities={facilities}
+        activeId={activeId}
+        canPickOnMap={canPickOnMap}
+        onMarkerActivate={handleMarkerActivate}
+        onBackgroundClick={() => setActive(null)}
+        onPickLocation={handleManualPick}
+      />
+
+      <MapOverlay
+        permission={permission}
+        loading={loading}
+        error={error}
+        meta={meta}
+        facilityCount={facilities.length}
+        origin={location}
+        onRequestLocation={requestLocation}
+        onRecenter={() =>
+          location?.source === 'device'
+            ? requestLocation()
+            : undefined
+        }
+      />
+
+      {showGate && (
+        <PermissionGate
+          permission={permission}
+          onRequestLocation={requestLocation}
+          onSkipToMap={() => setPermission('denied')}
+        />
+      )}
+    </div>
+  );
+}
+
+/* =================================================================
+ * Overlay — status bar + recenter control
+ * =============================================================== */
+
+function MapOverlay({
+  permission,
+  loading,
+  error,
+  meta,
+  facilityCount,
+  origin,
+  onRequestLocation,
+  onRecenter,
+}) {
+  const subtitle = (() => {
+    if (error) return error;
+    if (permission === 'checking') return 'Checking location permission…';
+    if (permission === 'requesting') return 'Waiting for your device location…';
+    if (loading) return 'Looking for nearby facilities…';
+    if (permission === 'denied') return 'Location blocked — tap the map to set your area';
+    if (permission === 'unavailable') return 'No GPS fix — tap the map to set your area';
+    if (facilityCount === 0) return 'No facilities found nearby';
+    return `${facilityCount} facilit${facilityCount === 1 ? 'y' : 'ies'} nearby${
+      origin?.source === 'manual' ? ' (pinned area)' : ''
+    }${meta?.expanded ? ' — nearest results shown' : ''}`;
+  })();
+
+  return (
+    <>
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1200] p-4">
+        <div className="pointer-events-auto mx-auto flex max-w-md items-center gap-3 rounded-2xl bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+          <span aria-hidden className="text-xl">🏥</span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-900">
+              Healthcare near you
+            </p>
+            <p className="truncate text-xs text-slate-500">{subtitle}</p>
+          </div>
+        </div>
+      </div>
+
+      {origin?.source === 'device' && (
+        <div className="absolute bottom-6 right-4 z-[1200]">
+          <button
+            type="button"
+            onClick={onRecenter}
+            aria-label="Centre map on my location"
+            className="grid h-11 w-11 place-items-center rounded-full bg-white text-lg shadow-lg transition active:scale-95"
+          >
+            🎯
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* =================================================================
+ * Permission gate
+ * =============================================================== */
+
+function PermissionGate({ permission, onRequestLocation, onSkipToMap }) {
+  if (permission === 'checking') {
+    return (
+      <Backdrop>
+        <Spinner />
+        <p className="mt-4 text-sm text-slate-600">Checking location permission…</p>
+      </Backdrop>
+    );
+  }
+
+  if (permission === 'requesting') {
+    return (
+      <Backdrop>
+        <Spinner />
+        <p className="mt-4 text-sm text-slate-600">
+          Waiting for your device location…
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          Allow access in the browser prompt.
+        </p>
+      </Backdrop>
+    );
+  }
+
+  if (permission === 'unsupported') {
+    return (
+      <Backdrop>
+        <div className="text-4xl">📍</div>
+        <h2 className="mt-3 text-lg font-semibold text-slate-900">
+          Location not supported
+        </h2>
+        <p className="mt-2 text-sm text-slate-600">
+          This device or browser cannot provide a location. You can still browse the
+          map and tap a facility to view it.
+        </p>
+        <button
+          type="button"
+          onClick={onSkipToMap}
+          className="mt-5 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+        >
+          Browse the map
+        </button>
+      </Backdrop>
+    );
+  }
+
+  const isBlocked = permission === 'denied' || permission === 'unavailable';
+
+  return (
+    <Backdrop>
+      <div className="text-4xl">🧭</div>
+      <h2 className="mt-3 text-lg font-semibold text-slate-900">
+        {isBlocked ? 'Location is blocked' : 'Find care near you'}
+      </h2>
+      <p className="mt-2 text-sm text-slate-600">
+        {isBlocked
+          ? 'We need your location to show nearby clinics, hospitals and pharmacies. Enable location for this site in your browser settings, then try again.'
+          : 'We use your device location only to find healthcare facilities near you. Your exact position is never posted publicly.'}
+      </p>
+
+      <button
+        type="button"
+        onClick={onRequestLocation}
+        className="mt-5 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98]"
+      >
+        {isBlocked ? 'Try again' : 'Allow location access'}
+      </button>
+
+      <button
+        type="button"
+        onClick={onSkipToMap}
+        className="mt-2 w-full rounded-xl px-4 py-3 text-sm font-medium text-slate-600"
+      >
+        Pick a location on the map instead
+      </button>
+    </Backdrop>
+  );
+}
+
+function Backdrop({ children }) {
+  return (
+    <div className="absolute inset-0 z-[1300] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
+  );
+}
+
+function MapSkeleton({ message }) {
+  return (
+    <div className="fixed inset-0 grid place-items-center bg-slate-100">
+      <div className="flex flex-col items-center gap-3">
+        <Spinner />
+        <p className="text-sm text-slate-500">{message}</p>
+      </div>
+    </div>
+  );
+}
