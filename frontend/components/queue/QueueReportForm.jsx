@@ -6,8 +6,19 @@ import {
   QUEUE_TYPES,
   PEOPLE_AHEAD_PRESETS,
   QUEUE_CONFIG,
-} from '@lib/queueConstants';
-import { isNearFacility } from '@lib/location';
+} from '@lib/queue/queueConstants';
+import { checkFacilityProximity } from '@lib/queue/location';
+
+const VERIFY_REASON_TEXT = {
+  permission_denied:
+    'Location permission was blocked. Check your browser settings.',
+  unavailable: 'Location unavailable — signal or GPS issue.',
+  timeout: 'Timed out waiting for your location. Try again.',
+  out_of_range: 'You appear to be away from this facility.',
+  unsupported: 'This browser does not support location.',
+  no_facility_coords: 'No location set for this facility.',
+  unknown: "Couldn't get your location. You can still submit.",
+};
 
 export default function QueueReportForm({
   facility,
@@ -21,6 +32,7 @@ export default function QueueReportForm({
   const [locationVerified, setLocationVerified] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyAttempted, setVerifyAttempted] = useState(false);
+  const [verifyReason, setVerifyReason] = useState(null);
 
   const locked = busy || verifying;
   const canSubmit = Boolean(queueType && peopleAhead) && !locked;
@@ -29,14 +41,22 @@ export default function QueueReportForm({
     if (locationVerified) {
       setLocationVerified(false);
       setVerifyAttempted(false);
+      setVerifyReason(null);
       return;
     }
 
     setVerifying(true);
     setVerifyAttempted(false);
-    const near = await isNearFacility(facility, QUEUE_CONFIG.verifyRadiusMeters);
-    setLocationVerified(near);
+    setVerifyReason(null);
+
+    const { verified, reason } = await checkFacilityProximity(
+      facility,
+      QUEUE_CONFIG.verifyRadiusMeters,
+    );
+
+    setLocationVerified(verified);
     setVerifyAttempted(true);
+    setVerifyReason(reason);
     setVerifying(false);
   };
 
@@ -79,7 +99,8 @@ export default function QueueReportForm({
     : locationVerified
       ? 'Tap to remove verification'
       : verifyFailed
-        ? 'You can still submit without verification'
+        ? VERIFY_REASON_TEXT[verifyReason] ??
+          'You can still submit without verification'
         : 'Only a yes/no flag is shared. Your location is never sent.';
 
   const helperText = !canSubmit && !busy

@@ -1,2 +1,8 @@
 Directions card - should be a component
 Emergency button - should be a component
+
+To run the server on mobile:
+npm run dev:https
+
+To run the server for desktop:
+npm run dev

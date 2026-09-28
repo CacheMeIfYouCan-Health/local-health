@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import QueueScreen from '@components/queue/QueueScreen';
-import { getFacility, DEFAULT_FACILITY_ID } from '@lib/facilities';
+import { getFacility, DEFAULT_FACILITY_ID } from '@lib/queue/facilities';
 
 export const metadata = {
   title: 'Queue status',

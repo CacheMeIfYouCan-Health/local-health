@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getQueueStatus } from '@lib/queueService';
-import { queueTypeLabel } from '@lib/queueConstants';
+import { getQueueStatus } from '@lib/queue/queueService';
+import { queueTypeLabel } from '@lib/queue/queueConstants';
 
 const LEVEL_STYLES = {
   low: {
