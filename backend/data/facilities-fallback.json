@@ -1,0 +1,22 @@
+[
+  { "id": "fallback-1", "name": "Chris Hani Baragwanath Hospital", "type": "hospital", "address": "Diepkloof, Soweto", "phone": "011 933 8000", "emergency_phone": "10177", "latitude": -26.2606, "longitude": 27.9422 },
+  { "id": "fallback-2", "name": "Alexandra Community Health Centre", "type": "clinic", "address": "Alexandra, Johannesburg", "phone": "011 443 2200", "emergency_phone": null, "latitude": -26.1045, "longitude": 28.0929 },
+  { "id": "fallback-3", "name": "Charlotte Maxeke Johannesburg Academic Hospital", "type": "hospital", "address": "Parktown, Johannesburg", "phone": "011 488 4911", "emergency_phone": "10177", "latitude": -26.1798, "longitude": 28.0430 },
+  { "id": "fallback-4", "name": "Helen Joseph Hospital", "type": "hospital", "address": "Rossmore, Johannesburg", "phone": "011 489 1011", "emergency_phone": "10177", "latitude": -26.1810, "longitude": 27.9950 },
+  { "id": "fallback-5", "name": "Hillbrow Community Health Centre", "type": "clinic", "address": "Hillbrow, Johannesburg", "phone": "011 720 4200", "emergency_phone": null, "latitude": -26.1917, "longitude": 28.0475 },
+  { "id": "fallback-6", "name": "Steve Biko Academic Hospital", "type": "hospital", "address": "Pretoria", "phone": "012 354 1000", "emergency_phone": "10177", "latitude": -25.7340, "longitude": 28.1930 },
+  { "id": "fallback-7", "name": "Tembisa Hospital", "type": "hospital", "address": "Tembisa", "phone": "011 923 2000", "emergency_phone": "10177", "latitude": -26.0011, "longitude": 28.2276 },
+  { "id": "fallback-8", "name": "Groote Schuur Hospital", "type": "hospital", "address": "Observatory, Cape Town", "phone": "021 404 9111", "emergency_phone": "10177", "latitude": -33.9410, "longitude": 18.4630 },
+  { "id": "fallback-9", "name": "Tygerberg Hospital", "type": "hospital", "address": "Parow, Cape Town", "phone": "021 938 9111", "emergency_phone": "10177", "latitude": -33.9115, "longitude": 18.6000 },
+  { "id": "fallback-10", "name": "Khayelitsha District Hospital", "type": "hospital", "address": "Khayelitsha, Cape Town", "phone": "021 360 4000", "emergency_phone": "10177", "latitude": -34.0364, "longitude": 18.6870 },
+  { "id": "fallback-11", "name": "Inkosi Albert Luthuli Central Hospital", "type": "hospital", "address": "Cato Manor, Durban", "phone": "031 240 1000", "emergency_phone": "10177", "latitude": -29.8640, "longitude": 30.9440 },
+  { "id": "fallback-12", "name": "King Edward VIII Hospital", "type": "hospital", "address": "Congella, Durban", "phone": "031 360 3111", "emergency_phone": "10177", "latitude": -29.8780, "longitude": 30.9860 },
+  { "id": "fallback-13", "name": "Edendale Hospital", "type": "hospital", "address": "Plessislaer, PMB", "phone": "033 395 4111", "emergency_phone": "10177", "latitude": -29.6428, "longitude": 30.3361 },
+  { "id": "fallback-14", "name": "Nelson Mandela Academic Hospital", "type": "hospital", "address": "Mthatha", "phone": "047 502 4000", "emergency_phone": "10177", "latitude": -31.5890, "longitude": 28.7860 },
+  { "id": "fallback-15", "name": "Frere Hospital", "type": "hospital", "address": "East London", "phone": "043 709 2111", "emergency_phone": "10177", "latitude": -32.9990, "longitude": 27.8970 },
+  { "id": "fallback-16", "name": "Livingstone Hospital", "type": "hospital", "address": "Port Elizabeth", "phone": "041 405 2111", "emergency_phone": "10177", "latitude": -33.9470, "longitude": 25.5950 },
+  { "id": "fallback-17", "name": "Polokwane Provincial Hospital", "type": "hospital", "address": "Polokwane", "phone": "015 287 5000", "emergency_phone": "10177", "latitude": -23.9060, "longitude": 29.4640 },
+  { "id": "fallback-18", "name": "Rob Ferreira Hospital", "type": "hospital", "address": "Nelspruit", "phone": "013 741 6000", "emergency_phone": "10177", "latitude": -25.4750, "longitude": 30.9700 },
+  { "id": "fallback-19", "name": "Universitas Academic Hospital", "type": "hospital", "address": "Bloemfontein", "phone": "051 405 3911", "emergency_phone": "10177", "latitude": -29.1270, "longitude": 26.1910 },
+  { "id": "fallback-20", "name": "Kimberley Hospital Complex", "type": "hospital", "address": "Kimberley", "phone": "053 802 9111", "emergency_phone": "10177", "latitude": -28.7380, "longitude": 24.7660 }
+]

@@ -43,10 +43,14 @@ export function validateNearbyQuery(req, _res, next) {
 }
 
 export function validateIdParam(req, _res, next) {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id < 1) {
-    return next(badRequest('Path param "id" must be a positive integer'));
+  const id = req.params.id;
+
+  // Accept either a numeric id (legacy), an OSM id, or a fallback id
+  const okFormat = /^(\d+|osm-(node|way|relation)-\d+|fallback-\d+)$/.test(id);
+  if (!okFormat) {
+    return next(badRequest('Path param "id" has an invalid format'));
   }
+
   req.validated = { ...(req.validated ?? {}), id };
   next();
 }
