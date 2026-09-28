@@ -3,6 +3,7 @@ import {
   findFacilityById,
   findRecentQueueReports,
   createQueueReport,
+  findQueueSummariesFor,
 } from '../services/facilities.service.js';
 import { notFound } from '../utils/httpError.js';
 
@@ -11,12 +12,13 @@ export async function getNearbyFacilities(req, res) {
   const { lat, lng, radiusKm, limit, type } = req.validated;
   const rows = await findNearbyFacilities({ lat, lng, radiusKm, limit, type });
 
+  const queueMap = await findQueueSummariesFor(rows.map((r) => r.id));
+
   res.json({
     meta: {
       origin: { lat, lng },
       radiusKm,
       count: rows.length,
-      // Tells the frontend the radius was widened by the service layer if needed.
       expanded: false,
     },
     facilities: rows.map((row) => ({
@@ -31,6 +33,12 @@ export async function getNearbyFacilities(req, res) {
       operatingHours: row.operating_hours,
       services: row.services,
       distanceKm: Number(row.distance_km.toFixed(2)),
+      queue: queueMap.get(row.id) ?? {
+        congestion: 'unknown',
+        sampleSize: 0,
+        avgWaitMinutes: null,
+        lastReportedAt: null,
+      },
     })),
   });
 }
