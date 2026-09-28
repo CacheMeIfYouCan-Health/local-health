@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { listFacilities } from '@lib/facilities';
+import { listFacilities } from '@lib/queue/facilities';
 
 export default async function Home() {
   const facilities = await listFacilities();

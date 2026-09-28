@@ -6,8 +6,8 @@ import {
   QUEUE_TYPES,
   PEOPLE_AHEAD_PRESETS,
   QUEUE_CONFIG,
-} from '@lib/queueConstants';
-import { isNearFacility } from '@lib/location';
+} from '@lib/queue/queueConstants';
+import { isNearFacility } from '@lib/queue/location';
 
 export default function QueueReportForm({
   facility,

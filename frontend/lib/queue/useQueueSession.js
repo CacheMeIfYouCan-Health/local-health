@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import * as queueService from './queueService';
-import { QUEUE_CONFIG } from './queueConstants';
+import * as queueService from './queueHelpers/queueService';
+import { QUEUE_CONFIG } from './queueHelpers/queueConstants';
 
 /**
  * Status: 'loading' | 'idle' | 'checking_in' | 'checked_in' | 'checking_out'
