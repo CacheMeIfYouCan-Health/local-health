@@ -21,7 +21,7 @@ export const PEOPLE_AHEAD_PRESETS = [
 
 export const QUEUE_CONFIG = {
   staleAfterMs: 3 * 60 * 60 * 1000, // 3h — drop abandoned sessions
-  verifyRadiusMeters: 15000,
+  verifyRadiusMeters: 40000,
   storageKey: 'queue.session.v1',
 };
 
