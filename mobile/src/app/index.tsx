@@ -1,8 +1,10 @@
 import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
+import { Platform, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AnimatedIcon } from '@/components/animated-icon';
+import { EmergencyButton } from '@/components/emergency-button';
 import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -38,6 +40,17 @@ export default function HomeScreen() {
             Welcome to&nbsp;Expo
           </ThemedText>
         </ThemedView>
+
+        <EmergencyButton facilityName="Test Hospital" phone="+27821234567" />
+
+        <Pressable
+          onPress={() => {
+            console.log('medical link clicked');
+            router.push('/medical-info');
+          }}
+          style={styles.link}>
+          <ThemedText type="linkPrimary">My medical info →</ThemedText>
+        </Pressable>
 
         <ThemedText type="code" style={styles.code}>
           get started
@@ -94,5 +107,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.four,
     borderRadius: Spacing.four,
+  },
+  link: {
+    marginTop: Spacing.two,
   },
 });
