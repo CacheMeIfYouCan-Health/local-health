@@ -1,150 +1,211 @@
-import { query } from '../config/db.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-/**
- * Haversine distance in kilometres, evaluated inside Postgres so we don't
- * pull the whole table into Node. A bounding box narrows the scan first.
- */
-const NEARBY_SQL = `
-  WITH filtered AS (
-    SELECT *
-    FROM facilities
-    WHERE latitude BETWEEN $1 - ($3 / 111.0)
-                      AND $1 + ($3 / 111.0)
-      AND longitude BETWEEN $2 - ($3 / (111.0 * COALESCE(cos(radians($1)), 1)))
-                        AND $2 + ($3 / (111.0 * COALESCE(cos(radians($1)), 1)))
-      AND ($4::text IS NULL OR type = $4::text)
-  )
-  SELECT
-    id, name, type, address, phone, emergency_phone,
-    latitude, longitude, operating_hours, services,
-    6371 * acos(
-      LEAST(1,
-        cos(radians($1)) * cos(radians(latitude)) * cos(radians(longitude) - radians($2))
-        + sin(radians($1)) * sin(radians(latitude))
-      )
-    ) AS distance_km
-  FROM filtered
-  WHERE 6371 * acos(
-      LEAST(1,
-        cos(radians($1)) * cos(radians(latitude)) * cos(radians(longitude) - radians($2))
-        + sin(radians($1)) * sin(radians(latitude))
-      )
-    ) <= $3
-  ORDER BY distance_km ASC
-  LIMIT $5;
-`;
+const here = path.dirname(fileURLToPath(import.meta.url));
+const FALLBACK_PATH = path.join(here, '..', 'data', 'facilities-fallback.json');
+const FALLBACK = JSON.parse(fs.readFileSync(FALLBACK_PATH, 'utf8'));
+console.log(`[facilities] loaded ${FALLBACK.length} fallback facilities`);
 
-export async function findNearbyFacilities({ lat, lng, radiusKm, limit, type }) {
-  const { rows } = await query(NEARBY_SQL, [lat, lng, radiusKm, type, limit]);
-  return rows;
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+
+const USER_AGENT = 'HealthcareAccessPlatform/1.0 (contact: you@example.com)';
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const FALLBACK_TTL_MS = 60 * 1000;
+const MIN_INTERVAL_MS = 3000;
+const OVERPASS_TIMEOUT_MS = 12_000;
+
+const cache = new Map();
+let lastCallAt = 0;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function throttle() {
+  const wait = lastCallAt + MIN_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt = Date.now();
 }
 
-const DETAIL_SQL = `
-  SELECT id, name, type, address, phone, emergency_phone,
-         latitude, longitude, operating_hours, services,
-         created_at, updated_at
-  FROM facilities
-  WHERE id = $1;
-`;
-
-export async function findFacilityById(id) {
-  const { rows } = await query(DETAIL_SQL, [id]);
-  return rows[0] ?? null;
+function distanceKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-const LATEST_QUEUE_SQL = `
-  SELECT id, queue_length, wait_minutes, congestion, service_type,
-         notes, location_verified, created_at
-  FROM queue_reports
-  WHERE facility_id = $1
-    AND created_at > NOW() - INTERVAL '3 hours'
-  ORDER BY created_at DESC
-  LIMIT 20;
-`;
-
-export async function findRecentQueueReports(facilityId) {
-  const { rows } = await query(LATEST_QUEUE_SQL, [facilityId]);
-  return rows;
+function buildQuery({ lat, lng, radiusKm }) {
+  const r = radiusKm * 1000;
+  return `[out:json][timeout:10];
+(
+  nwr["amenity"~"^(hospital|clinic|pharmacy|doctors)$"](around:${r},${lat},${lng});
+);
+out center tags;`;
 }
 
-const INSERT_QUEUE_SQL = `
-  INSERT INTO queue_reports
-    (facility_id, queue_length, wait_minutes, congestion,
-     service_type, notes, location_verified)
-  VALUES ($1, $2, $3, $4, $5, $6, $7)
-  RETURNING id, facility_id, queue_length, wait_minutes, congestion,
-            service_type, notes, location_verified, created_at;
-`;
+async function fetchOverpass({ lat, lng, radiusKm }) {
+  const query = buildQuery({ lat, lng, radiusKm });
 
-export async function createQueueReport(input) {
-  const { rows } = await query(INSERT_QUEUE_SQL, [
-    input.facilityId,
-    input.queueLength ?? null,
-    input.waitMinutes ?? null,
-    input.congestion ?? null,
-    input.serviceType ?? null,
-    input.notes ?? null,
-    input.locationVerified ?? false,
-  ]);
-  return rows[0];
-}
-
-const QUEUE_SUMMARY_SQL = `
-  SELECT facility_id, congestion, wait_minutes, created_at
-  FROM queue_reports
-  WHERE facility_id = ANY($1::int[])
-    AND created_at > NOW() - INTERVAL '3 hours'
-  ORDER BY facility_id, created_at DESC;
-`;
-
-export async function findQueueSummariesFor(facilityIds) {
-  if (!facilityIds.length) return new Map();
-
-  const { rows } = await query(QUEUE_SUMMARY_SQL, [facilityIds]);
-
-  const grouped = new Map();
-  for (const row of rows) {
-    if (!grouped.has(row.facility_id)) grouped.set(row.facility_id, []);
-    grouped.get(row.facility_id).push(row);
+  for (const url of OVERPASS_ENDPOINTS) {
+    await throttle();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': USER_AGENT,
+          Accept: 'application/json',
+        },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS),
+      });
+      if (res.status === 429 || !res.ok) {
+        console.warn(`[overpass] ${url} -> ${res.status}`);
+        continue;
+      }
+      const json = await res.json();
+      const elements = json.elements ?? [];
+      if (elements.length > 0) return { elements, source: 'overpass' };
+      console.warn(`[overpass] ${url} returned 0 elements`);
+    } catch (err) {
+      console.warn(`[overpass] ${url} failed:`, err.message);
+    }
   }
 
-  const summaries = new Map();
-  for (const [id, reports] of grouped.entries()) {
-    summaries.set(id, summariseQueue(reports));
-  }
-  return summaries;
+  console.warn('[overpass] all endpoints failed, using local fallback');
+  return { elements: null, source: 'fallback' };
 }
 
-function summariseQueue(reports) {
-  if (reports.length === 0) {
-    return {
-      congestion: 'unknown',
-      sampleSize: 0,
-      avgWaitMinutes: null,
-      lastReportedAt: null,
-    };
-  }
+function classify(tags) {
+  const a = tags.amenity;
+  const h = tags.healthcare;
+  if (a === 'hospital' || h === 'hospital') return 'hospital';
+  if (a === 'clinic' || h === 'clinic') return 'clinic';
+  if (a === 'pharmacy' || h === 'pharmacy') return 'pharmacy';
+  if (a === 'doctors' || h === 'doctor') return 'practitioner';
+  return null;
+}
 
-  const weights = { low: 1, moderate: 2, high: 3 };
-  const scored = reports.filter((r) => r.congestion);
-  const waits = reports
-    .filter((r) => Number.isFinite(r.wait_minutes))
-    .map((r) => r.wait_minutes);
+function transformOverpass(element) {
+  const tags = element.tags ?? {};
+  const type = classify(tags);
+  if (!type) return null;
 
-  let congestion = 'unknown';
-  if (scored.length > 0) {
-    const avg = scored.reduce((s, r) => s + weights[r.congestion], 0) / scored.length;
-    congestion = avg < 1.5 ? 'low' : avg < 2.5 ? 'moderate' : 'high';
-  }
+  const lat = element.lat ?? element.center?.lat;
+  const lng = element.lon ?? element.center?.lon;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-  const avgWaitMinutes = waits.length
-    ? Math.round(waits.reduce((s, w) => s + w, 0) / waits.length)
-    : null;
+  const address =
+    [
+      tags['addr:housenumber'],
+      tags['addr:street'],
+      tags['addr:suburb'],
+      tags['addr:city'],
+    ]
+      .filter(Boolean)
+      .join(', ') || null;
 
   return {
-    congestion,
-    sampleSize: reports.length,
-    avgWaitMinutes,
-    lastReportedAt: reports[0].created_at,
+    id: `osm-${element.type}-${element.id}`,
+    name: tags.name || tags['name:en'] || 'Unnamed facility',
+    type,
+    address,
+    phone: tags.phone || tags['contact:phone'] || null,
+    emergency_phone: null,
+    latitude: lat,
+    longitude: lng,
+    operating_hours: tags.opening_hours || null,
+    services: [],
   };
+}
+
+function cacheKey({ lat, lng, radiusKm }) {
+  return `${lat.toFixed(2)}|${lng.toFixed(2)}|${radiusKm}`;
+}
+
+async function getElements({ lat, lng, radiusKm }) {
+  const key = cacheKey({ lat, lng, radiusKm });
+  const hit = cache.get(key);
+  if (hit) {
+    const ttl = hit.source === 'fallback' ? FALLBACK_TTL_MS : CACHE_TTL_MS;
+    if (Date.now() - hit.t < ttl) return hit;
+  }
+
+  const result = await fetchOverpass({ lat, lng, radiusKm });
+  const stored = { t: Date.now(), ...result };
+  cache.set(key, stored);
+  return stored;
+}
+
+export async function findNearbyFacilities({ lat, lng, radiusKm, limit, type }) {
+  const { elements, source } = await getElements({ lat, lng, radiusKm });
+
+  const pool =
+    source === 'overpass'
+      ? elements.map(transformOverpass).filter(Boolean)
+      : FALLBACK;
+
+  const out = [];
+  for (const f of pool) {
+    if (type && f.type !== type) continue;
+    const d = distanceKm(lat, lng, f.latitude, f.longitude);
+    if (d > radiusKm) continue;
+    out.push({ ...f, distance_km: Number(d.toFixed(2)) });
+  }
+
+  out.sort((a, b) => a.distance_km - b.distance_km);
+  console.log(`[facilities] served ${out.length} from ${source}`);
+  return out.slice(0, limit);
+}
+
+export async function findFacilityById(id) {
+  const fb = FALLBACK.find((f) => f.id === id);
+  if (fb) return fb;
+
+  const m = String(id).match(/^osm-(node|way|relation)-(\d+)$/);
+  if (!m) return null;
+
+  const [, osmType, osmId] = m;
+  const query = `[out:json][timeout:10]; ${osmType}(${osmId}); out center tags;`;
+
+  for (const url of OVERPASS_ENDPOINTS) {
+    await throttle();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': USER_AGENT,
+          Accept: 'application/json',
+        },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS),
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const el = json.elements?.[0];
+      return el ? transformOverpass(el) : null;
+    } catch {
+      /* try next endpoint */
+    }
+  }
+  return null;
+}
+
+export async function findRecentQueueReports() {
+  return [];
+}
+
+export async function createQueueReport() {
+  throw new Error('Queue reports not yet wired up');
+}
+
+export async function findQueueSummariesFor() {
+  return new Map();
 }
