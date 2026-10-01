@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Chip, EmptyState, Touchable, Ionicons, PrimaryButton } from '@/components/ui';
 import FacilitiesStatus from '@/components/facilities-status';
 import { colors, spacing, radius, touch, font, shadow } from '@/lib/theme';
@@ -93,6 +94,7 @@ export default function Nearby() {
 }
 
 function FacilityRow({ facility: f }) {
+  const router = useRouter();
   const number = f.phone || f.emergencyPhone;
   const emergency = isEmergencyCapable(f);
   const typeIcon = FACILITY_TYPES[f.type]?.icon ?? 'business';
@@ -116,6 +118,14 @@ function FacilityRow({ facility: f }) {
           </Touchable>
         ) : null}
       </View>
+      <Touchable
+        onPress={() => router.push({ pathname: '/forum/[id]', params: { id: f.id, name: f.name } })}
+        accessibilityRole="button"
+        accessibilityLabel={`Open the community forum for ${f.name}`}
+        style={s.forumBtn}
+      >
+        <Ionicons name="chatbubbles-outline" size={20} color={colors.emerald700} />
+      </Touchable>
       {number ? (
         <Touchable
           onPress={() => callNumber(number)}
@@ -134,6 +144,10 @@ function FacilityRow({ facility: f }) {
 }
 
 const s = StyleSheet.create({
+  forumBtn: {
+    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.emerald50, borderWidth: 1, borderColor: colors.emerald100,
+  },
   safe: { flex: 1, backgroundColor: colors.bg },
   container: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl * 2 },
   title: { fontSize: font.title, fontWeight: '800', color: colors.text },
