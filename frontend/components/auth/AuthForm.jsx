@@ -2,18 +2,26 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useMutation } from '@tanstack/react-query';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { login, signup } from '@lib/auth';
 
 export default function AuthForm({ mode }) {
   const isSignup = mode === 'signup';
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const params = useSearchParams();
+  // Only same-site paths, so ?next= can't send people to another site.
+  const rawNext = params.get('next');
+  const next = rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/map';
   const [form, setForm] = useState({ name: '', email: '', password: '' });
 
   const { mutate, isPending, error } = useMutation({
     mutationFn: isSignup ? signup : login,
-    onSuccess: () => router.replace('/map'),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+      router.replace(next);
+    },
   });
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -59,7 +67,9 @@ export default function AuthForm({ mode }) {
 
         <p className="text-center text-sm text-slate-500">
           {isSignup ? 'Already have an account? ' : "Don't have an account? "}
-          <Link href={isSignup ? '/login' : '/signin'} className="font-medium text-blue-600 hover:underline">
+          <Link
+            href={`${isSignup ? '/login' : '/signin'}${rawNext ? `?next=${encodeURIComponent(next)}` : ''}`}
+            className="font-medium text-blue-600 hover:underline">
             {isSignup ? 'Log in' : 'Sign up'}
           </Link>
         </p>

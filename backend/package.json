@@ -7,9 +7,11 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "db:migrate": "node db/migrate.js",
-    "db:seed": "node db/seed.js"
+    "db:seed": "node db/seed.js",
+    "vapid": "web-push generate-vapid-keys"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@neondatabase/serverless": "^1.1.0",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
@@ -18,6 +20,8 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.0",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "socket.io": "^4.8.4",
+    "web-push": "^3.6.7"
   }
 }
