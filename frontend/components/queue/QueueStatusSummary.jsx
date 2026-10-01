@@ -46,7 +46,7 @@ export default function QueueStatusSummary({ facilityId }) {
 
   if (isPending || !data) {
     return (
-      <div className="rounded-2xl bg-gray-50 p-5">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
         <div className="h-3 w-32 animate-pulse rounded bg-gray-200" />
         <div className="mt-4 h-10 w-24 animate-pulse rounded bg-gray-200" />
         <div className="mt-4 h-3 w-full animate-pulse rounded bg-gray-200" />
@@ -65,7 +65,7 @@ export default function QueueStatusSummary({ facilityId }) {
   const waitDisplay = summary.avgWaitMinutes ?? '—';
 
   return (
-    <div className="rounded-2xl bg-gray-50 p-5">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
           Current status

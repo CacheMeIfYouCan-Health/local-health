@@ -37,7 +37,7 @@ export default function FacilityPage() {
 
   if (isPending) {
     return (
-      <div className="grid min-h-screen place-items-center bg-slate-50">
+      <div className="grid min-h-screen place-items-center bg-slate-100">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
       </div>
     );
@@ -45,7 +45,7 @@ export default function FacilityPage() {
 
   if (error || !data) {
     return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 p-6">
+      <div className="grid min-h-screen place-items-center bg-slate-100 p-6">
         <div className="max-w-sm text-center">
           <p className="text-lg font-semibold text-slate-900">Facility not found</p>
           <p className="mt-1 text-sm text-slate-500">{error?.message}</p>
@@ -79,9 +79,9 @@ export default function FacilityPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-100">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-slate-300 bg-slate-50/95 px-4 py-3 backdrop-blur">
         <button
           onClick={() => router.back()}
           className="flex items-center gap-2 text-sm font-medium text-slate-600"
@@ -112,7 +112,9 @@ export default function FacilityPage() {
           <p className="mt-2 text-sm text-slate-600">
             {waitMin != null
               ? `Estimated wait ~${waitMin} min`
-              : 'No recent reports'}
+              : (queue?.summary?.sampleSize ?? 0) > 0
+                ? 'No measured wait time yet'
+                : 'No recent reports'}
           </p>
           <p className="mt-1 text-xs text-slate-400">
             {queue?.summary?.sampleSize ?? 0} recent report
@@ -179,7 +181,7 @@ function ActionCard({ title, icon, accent, onClick, children }) {
     <button
       type="button"
       onClick={onClick}
-      className="rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200 transition active:scale-[0.98] hover:shadow-md"
+      className="rounded-2xl border border-slate-300 bg-slate-50 p-4 text-left shadow-sm transition hover:border-slate-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
     >
       <div className="flex items-center gap-3">
         <span className={`grid h-10 w-10 place-items-center rounded-xl text-lg ${cls}`}>

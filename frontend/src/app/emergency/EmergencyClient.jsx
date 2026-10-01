@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function EmergencyClient() {
@@ -10,20 +9,15 @@ export default function EmergencyClient() {
   const facilityName = params.get('name') ?? 'Emergency services';
   const phoneNumber = params.get('phone') ?? '10177';
 
-  const [confirming, setConfirming] = useState(false);
   const clean = phoneNumber.replace(/\s+/g, '');
-
-  useEffect(() => {
-    setConfirming(true);
-  }, []);
 
   const call = () => {
     window.location.href = `tel:${clean}`;
   };
 
   return (
-    <div className="grid min-h-screen place-items-center bg-slate-50 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+    <div className="grid min-h-screen place-items-center bg-slate-100 p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-300 bg-slate-50 p-5 shadow-lg">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-full bg-red-100 text-lg">
             📞
@@ -36,14 +30,14 @@ export default function EmergencyClient() {
           </div>
         </div>
 
-        <div className="mt-4 rounded-xl bg-slate-50 p-4 text-center">
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-100 p-4 text-center">
           <p className="text-3xl font-bold tracking-wider text-slate-900">
             {clean}
           </p>
         </div>
 
         <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">
-          Your phone's dialler will open with this number ready. You still need
+          Your phone&apos;s dialler will open with this number ready. You still need
           to press call to connect.
         </p>
 

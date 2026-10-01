@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 
 import routes from './routes/index.js';
@@ -15,6 +16,7 @@ export function createApp() {
 
   app.use(cors({ origin: origins, credentials: true }));
   app.use(express.json({ limit: '100kb' }));
+  app.use(cookieParser());
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
   app.use('/api', routes);

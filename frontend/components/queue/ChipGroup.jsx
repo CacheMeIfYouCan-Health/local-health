@@ -19,7 +19,7 @@ export default function ChipGroup({ options, value, onChange, disabled }) {
             'focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2',
             selected
                 ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm'
-                : 'border-gray-200 bg-white text-gray-900 hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100',
+                : 'border-slate-300 bg-slate-100 text-gray-900 hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100',
             disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
             ].join(' ')}
           >

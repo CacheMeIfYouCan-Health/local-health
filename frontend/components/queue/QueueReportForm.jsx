@@ -73,7 +73,7 @@ export default function QueueReportForm({
       ? 'border-emerald-600 bg-emerald-600 text-white'
       : verifyFailed
         ? 'border-amber-500 bg-amber-50 text-amber-700'
-        : 'border-gray-300 bg-white';
+        : 'border-slate-300 bg-slate-50';
 
   const verifyButtonClass = [
     'mt-6 flex w-full items-center gap-3 rounded-xl border p-3 text-left shadow-sm transition disabled:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500',
@@ -83,7 +83,7 @@ export default function QueueReportForm({
         ? 'border-emerald-400 bg-emerald-50'
         : verifyFailed
           ? 'border-amber-300 bg-amber-50'
-          : 'border-gray-200 bg-white hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100',
+          : 'border-slate-300 bg-slate-100 hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100',
   ].join(' ');
 
   const verifyLabel = verifying

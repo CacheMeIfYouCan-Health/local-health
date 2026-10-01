@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import * as queueService from './queueService';
 import { QUEUE_CONFIG } from './queueConstants';
 
@@ -16,6 +17,22 @@ export default function useQueueSession(facility) {
   const [session, setSession] = useState(null);
   const [now, setNow] = useState(null);
   const [error, setError] = useState(null);
+  const queryClient = useQueryClient();
+
+  // The facility page, queue summary and map pins all read cached queries
+  // (30-60s staleTime), so without this a new report never showed up.
+  const refreshFacility = useCallback(
+    (queue) => {
+      if (queue) {
+        queryClient.setQueryData(['facility', facility.id], (old) =>
+          old ? { ...old, queue } : old,
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: ['facility', facility.id] });
+      queryClient.invalidateQueries({ queryKey: ['facilities'] });
+    },
+    [queryClient, facility.id],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -59,7 +76,7 @@ export default function useQueueSession(facility) {
 
   useEffect(() => {
     if (status !== 'checked_in') return undefined;
-    setNow(Date.now());
+    // `now` is already set wherever status becomes 'checked_in'.
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [status]);
@@ -86,6 +103,7 @@ export default function useQueueSession(facility) {
         setSession(created);
         setNow(Date.now());
         setStatus('checked_in');
+        refreshFacility();
         return true;
       } catch {
         setError('Could not check in. Please try again.');
@@ -93,7 +111,7 @@ export default function useQueueSession(facility) {
         return false;
       }
     },
-    [facility.id],
+    [facility.id, refreshFacility],
   );
 
   const checkOut = useCallback(async () => {
@@ -109,13 +127,14 @@ export default function useQueueSession(facility) {
       window.localStorage.removeItem(QUEUE_CONFIG.storageKey);
       setSession(null);
       setStatus('idle');
+      refreshFacility();
       return result.waitMinutes;
     } catch {
       setError('Could not check out. Your timer is still running.');
       setStatus('checked_in');
       return null;
     }
-  }, [facility.id, session]);
+  }, [facility.id, session, refreshFacility]);
 
   const discardSession = useCallback(async () => {
     window.localStorage.removeItem(QUEUE_CONFIG.storageKey);
@@ -128,20 +147,21 @@ export default function useQueueSession(facility) {
     async ({ queueType, peopleAheadOption, locationVerified }) => {
       setError(null);
       try {
-        await queueService.submitReport({
+        const result = await queueService.submitReport({
           facilityId: facility.id,
           queueType,
           peopleAhead: peopleAheadOption?.value ?? null,
           peopleAheadBucket: peopleAheadOption?.key ?? null,
           locationVerified,
         });
+        refreshFacility(result?.queue);
         return true;
       } catch {
         setError('Could not submit report. Please try again.');
         return false;
       }
     },
-    [facility.id],
+    [facility.id, refreshFacility],
   );
 
   return {

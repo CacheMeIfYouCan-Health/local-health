@@ -2,63 +2,32 @@
 
 import { useEffect, useState } from 'react';
 
-const HINTS = {
-  idle: {
-    icon: '👆',
-    title: 'Explore facilities nearby',
-    body: 'Tap any pin to see details. Adjust the search radius at the bottom.',
-  },
-  selected: {
-    icon: '📍',
-    title: 'Facility selected',
-    body: 'Tap the same pin again for full details — queue, directions, emergency call and forum.',
-  },
-};
-
-export default function MapHint({ state = 'idle', autoHideMs = 6000 }) {
-  const [visible, setVisible] = useState(false);
-  // Remember what the user has dismissed so we don't nag again
-  const [dismissed, setDismissed] = useState({ idle: false, selected: false });
+// Sits just above the radius control and never takes pointer events, so on a
+// phone it can't cover or swallow a tap meant for a facility pin. It only
+// shows in the idle state: once a pin is selected its popup already says
+// "Tap the pin again for more".
+export default function MapHint({ state = 'idle', autoHideMs = 5000 }) {
+  const [expired, setExpired] = useState(false);
 
   useEffect(() => {
-    if (dismissed[state]) return;
-
-    setVisible(true);
-    const t = setTimeout(() => setVisible(false), autoHideMs);
+    const t = setTimeout(() => setExpired(true), autoHideMs);
     return () => clearTimeout(t);
-  }, [state, dismissed, autoHideMs]);
+  }, [autoHideMs]);
 
-  const hint = HINTS[state] ?? HINTS.idle;
+  const visible = state === 'idle' && !expired;
 
   return (
     <div
-      className={`
-        pointer-events-none absolute inset-x-0 top-24 z-[1150] mx-auto flex max-w-sm px-4
-        transition-all duration-300
-        ${visible ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'}
-      `}
+      aria-live="polite"
+      className={`pointer-events-none absolute bottom-[132px] left-4 right-20 z-[1150] mx-auto max-w-sm transition-all duration-300 sm:right-4 ${
+        visible ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
+      }`}
     >
-      <div className="pointer-events-auto flex w-full items-start gap-3 rounded-2xl bg-slate-900/95 p-3 text-white shadow-xl backdrop-blur">
-        <span aria-hidden className="mt-0.5 text-lg">
-          {hint.icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold">{hint.title}</p>
-          <p className="mt-0.5 text-[11px] leading-relaxed text-slate-300">
-            {hint.body}
-          </p>
-        </div>
-        <button
-          type="button"
-          aria-label="Dismiss hint"
-          onClick={() => {
-            setDismissed((d) => ({ ...d, [state]: true }));
-            setVisible(false);
-          }}
-          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-800 hover:text-white"
-        >
-          ×
-        </button>
+      <div className="flex items-center gap-2.5 rounded-2xl bg-slate-900/90 px-3.5 py-2.5 text-white shadow-lg">
+        <span aria-hidden className="text-base">👆</span>
+        <p className="text-xs leading-snug text-slate-100">
+          Tap a pin to preview a facility, then tap it again for details.
+        </p>
       </div>
     </div>
   );
