@@ -3,8 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-
+import RadiusControl from '@components/map/RadiusControl';
 import { fetchNearbyFacilities } from '@lib/api';
+import MapHint from '@components/map/MapHint';
+
+const DEFAULT_RADIUS_KM = 15;
+const MIN_RADIUS_KM = 1;
+const MAX_RADIUS_KM = 50;
 
 // Leaflet touches `window`, so the map is client-only.
 const FacilityMapView = dynamic(() => import('@components/map/FacilityMapView'), {
@@ -29,6 +34,8 @@ export default function FacilityMap() {
   const [permission, setPermission] = useState('checking');
   const [location, setLocation] = useState(null); // { lat, lng, accuracy, source }
   const [facilities, setFacilities] = useState([]);
+  const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
+  const [debouncedRadius, setDebouncedRadius] = useState(DEFAULT_RADIUS_KM);
   const [meta, setMeta] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -70,6 +77,11 @@ export default function FacilityMap() {
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 }
     );
   }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedRadius(radiusKm), 400);
+    return () => clearTimeout(t);
+  }, [radiusKm]);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,8 +127,7 @@ export default function FacilityMap() {
     setError(null);
     setActive(null);
 
-    fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: 15 })
-      .then((payload) => {
+fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: debouncedRadius })      .then((payload) => {
         if (cancelled) return;
         setFacilities(payload.facilities);
         setMeta(payload.meta);
@@ -132,7 +143,7 @@ export default function FacilityMap() {
     return () => {
       cancelled = true;
     };
-  }, [location, setActive]);
+  }, [location, debouncedRadius, setActive]);
 
   /* ---------------------------------------------------------------
    * 3. Marker interaction
@@ -168,11 +179,14 @@ export default function FacilityMap() {
     permission === 'unsupported';
 
   const canPickOnMap = permission === 'denied' || permission === 'unavailable';
+  const MIN_RADIUS_KM = 1;
+  const MAX_RADIUS_KM = 50; 
 
   return (
     <div className="fixed inset-0 isolate z-0">
       <FacilityMapView
         origin={location}
+        radiusKm={debouncedRadius}
         facilities={facilities}
         activeId={activeId}
         canPickOnMap={canPickOnMap}
@@ -190,10 +204,26 @@ export default function FacilityMap() {
         origin={location}
         onRequestLocation={requestLocation}
         onRecenter={() =>
-          location?.source === 'device'
-            ? requestLocation()
-            : undefined
+          location?.source === 'device' ? requestLocation() : undefined
         }
+      />
+
+      <MapHint state={activeId ? 'selected' : 'idle'} />
+
+      <RadiusControl
+        value={radiusKm}
+        min={MIN_RADIUS_KM}
+        max={MAX_RADIUS_KM}
+        loading={loading}
+        onChange={setRadiusKm}
+      />
+
+      <RadiusControl
+        value={radiusKm}
+        min={MIN_RADIUS_KM}
+        max={MAX_RADIUS_KM}
+        loading={loading}
+        onChange={setRadiusKm}
       />
 
       {showGate && (
