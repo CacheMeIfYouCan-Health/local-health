@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { fetchFacility } from '@lib/api';
 
 const QUEUE_STYLES = {
-  low:      { bg: 'bg-emerald-50',  text: 'text-emerald-700',  ring: 'ring-emerald-200' },
-  moderate: { bg: 'bg-amber-50',    text: 'text-amber-700',    ring: 'ring-amber-200' },
-  high:     { bg: 'bg-red-50',      text: 'text-red-700',      ring: 'ring-red-200' },
-  unknown:  { bg: 'bg-slate-50',    text: 'text-slate-600',    ring: 'ring-slate-200' },
+  low:      { bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-200' },
+  moderate: { bg: 'bg-amber-50',   text: 'text-amber-700',   ring: 'ring-amber-200' },
+  high:     { bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-200' },
+  unknown:  { bg: 'bg-slate-50',   text: 'text-slate-600',   ring: 'ring-slate-200' },
 };
 
 export default function FacilityPage() {
@@ -16,24 +17,15 @@ export default function FacilityPage() {
   const params = useParams();
   const id = params?.id;
 
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [live, setLive] = useState(null);
 
-  // Load facility + recent queue reports
-  useEffect(() => {
-    if (!id) return;
-    let cancelled = false;
-    setLoading(true);
-    fetchFacility(id)
-      .then((payload) => { if (!cancelled) setData(payload); })
-      .catch((err) => { if (!cancelled) setError(err.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [id]);
+  const { data, isPending, error } = useQuery({
+    queryKey: ['facility', id],
+    queryFn: ({ signal }) => fetchFacility(id, { signal }),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
 
-  // Try to get device location for "Directions"
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
@@ -43,7 +35,7 @@ export default function FacilityPage() {
     );
   }, []);
 
-  if (loading) {
+  if (isPending) {
     return (
       <div className="grid min-h-screen place-items-center bg-slate-50">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
@@ -56,7 +48,7 @@ export default function FacilityPage() {
       <div className="grid min-h-screen place-items-center bg-slate-50 p-6">
         <div className="max-w-sm text-center">
           <p className="text-lg font-semibold text-slate-900">Facility not found</p>
-          <p className="mt-1 text-sm text-slate-500">{error}</p>
+          <p className="mt-1 text-sm text-slate-500">{error?.message}</p>
           <button
             onClick={() => router.push('/map')}
             className="mt-6 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white"

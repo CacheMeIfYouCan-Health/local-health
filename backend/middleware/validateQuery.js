@@ -5,10 +5,6 @@ const toNumber = (value) => {
   return Number.isFinite(n) ? n : null;
 };
 
-/**
- * Validates the query for GET /api/facilities/nearby.
- * Requires lat & lng; radiusKm, type and limit are optional.
- */
 export function validateNearbyQuery(req, _res, next) {
   const lat = toNumber(req.query.lat);
   const lng = toNumber(req.query.lng);
@@ -45,12 +41,26 @@ export function validateNearbyQuery(req, _res, next) {
 export function validateIdParam(req, _res, next) {
   const id = req.params.id;
 
-  // Accept either a numeric id (legacy), an OSM id, or a fallback id
   const okFormat = /^(\d+|osm-(node|way|relation)-\d+|fallback-\d+)$/.test(id);
   if (!okFormat) {
     return next(badRequest('Path param "id" has an invalid format'));
   }
 
   req.validated = { ...(req.validated ?? {}), id };
+  next();
+}
+
+export function validateSessionParams(req, _res, next) {
+  const { id, sessionId } = req.params;
+
+  const idOk = /^(\d+|osm-(node|way|relation)-\d+|fallback-\d+)$/.test(id);
+  if (!idOk) {
+    return next(badRequest('Path param "id" has an invalid format'));
+  }
+  if (!sessionId || sessionId.length > 200) {
+    return next(badRequest('Path param "sessionId" is invalid'));
+  }
+
+  req.validated = { ...(req.validated ?? {}), id, sessionId };
   next();
 }

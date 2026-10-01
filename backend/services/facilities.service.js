@@ -198,14 +198,133 @@ export async function findFacilityById(id) {
   return null;
 }
 
-export async function findRecentQueueReports() {
-  return [];
+// ---------------------------------------------------------------------------
+// Queue sessions (in-memory for now — replace with DB queries later)
+// ---------------------------------------------------------------------------
+
+const sessions = new Map(); // sessionId -> session row
+let sessionCounter = 0;
+
+export async function createQueueSession({
+  facilityId,
+  queueType,
+  peopleAhead,
+  peopleAheadBucket,
+  locationVerified,
+}) {
+  sessionCounter += 1;
+  const sessionId = `sess-${Date.now()}-${sessionCounter}`;
+  const row = {
+    sessionId,
+    facilityId,
+    queueType,
+    peopleAhead,
+    peopleAheadBucket,
+    locationVerified,
+    checkInAt: new Date().toISOString(),
+  };
+  sessions.set(sessionId, row);
+  return row;
 }
 
-export async function createQueueReport() {
-  throw new Error('Queue reports not yet wired up');
+export async function findQueueSessionById(sessionId) {
+  const row = sessions.get(sessionId);
+  if (!row) return null;
+  // Controller expects snake_case-ish shape: session.facility_id, session.check_in_at
+  return {
+    sessionId: row.sessionId,
+    facility_id: row.facilityId,
+    queue_type: row.queueType,
+    people_ahead: row.peopleAhead,
+    people_ahead_bucket: row.peopleAheadBucket,
+    location_verified: row.locationVerified,
+    check_in_at: row.checkInAt,
+    check_out_at: null,
+    wait_minutes: null,
+  };
 }
 
-export async function findQueueSummariesFor() {
-  return new Map();
+export async function closeQueueSession(sessionId, checkOutAt, waitMinutes) {
+  const row = sessions.get(sessionId);
+  if (!row) return null;
+  row.checkOutAt = checkOutAt.toISOString();
+  row.waitMinutes = waitMinutes;
+  return row;
+}
+
+// ---------------------------------------------------------------------------
+// Queue reports (in-memory for now — swap for DB later)
+// ---------------------------------------------------------------------------
+
+const reports = []; // newest first
+let reportCounter = 0;
+const REPORTS_PER_FACILITY = 20; // how many recent reports to keep per facility
+
+const BUCKET_TO_WEIGHT = {
+  few: 1,      // low
+  some: 2,     // moderate
+  many: 3,     // high
+};
+
+function congestionFromBucket(bucket) {
+  const w = BUCKET_TO_WEIGHT[bucket] ?? null;
+  if (w === null) return null;
+  return w === 1 ? 'low' : w === 2 ? 'moderate' : 'high';
+}
+
+export async function createQueueReport({
+  facilityId,
+  queueType,
+  peopleAhead,
+  peopleAheadBucket,
+  locationVerified,
+}) {
+  reportCounter += 1;
+  const row = {
+    id: `rep-${Date.now()}-${reportCounter}`,
+    facility_id: facilityId,
+    queue_type: queueType ?? null,
+    people_ahead: peopleAhead ?? null,
+    people_ahead_bucket: peopleAheadBucket ?? null,
+    location_verified: !!locationVerified,
+    congestion: congestionFromBucket(peopleAheadBucket),
+    created_at: new Date().toISOString(),
+  };
+  reports.unshift(row);
+  // Trim old reports per facility
+  let seen = 0;
+  for (let i = 0; i < reports.length; i++) {
+    if (reports[i].facility_id === facilityId) {
+      seen++;
+      if (seen > REPORTS_PER_FACILITY) {
+        reports.splice(i, 1);
+        i--;
+      }
+    }
+  }
+  return row;
+}
+
+export async function findRecentQueueReports(facilityId) {
+  return reports.filter((r) => r.facility_id === facilityId).slice(0, 10);
+}
+
+export async function findQueueSummariesFor(facilityIds) {
+  const map = new Map();
+  for (const id of facilityIds) {
+    const recent = reports.filter((r) => r.facility_id === id).slice(0, 10);
+    if (recent.length === 0) continue;
+    const scored = recent.filter((r) => r.congestion);
+    if (scored.length === 0) continue;
+    const weights = { low: 1, moderate: 2, high: 3 };
+    const avg =
+      scored.reduce((s, r) => s + weights[r.congestion], 0) / scored.length;
+    map.set(id, {
+      congestion: avg < 1.5 ? 'low' : avg < 2.5 ? 'moderate' : 'high',
+      sampleSize: scored.length,
+      avgWaitMinutes: null, // we don't know real wait time from a quick report
+      lastReportedAt: recent[0].created_at,
+    });
+  }
+  return map;
 }
