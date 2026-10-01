@@ -39,24 +39,32 @@ function currentPosition() {
 
 /** Keeps a list pinned to the bottom when new messages arrive, unless the reader scrolled up. */
 function useStickToBottom(count, lastIsMine) {
-  // Callback ref: the list only mounts after the forum has loaded.
-  const [el, setEl] = useState(null);
+  // The list only mounts after the forum has loaded, so a callback ref
+  // records the node (ref) and re-runs the effects once it exists (state).
+  const node = useRef(null);
+  const [mounted, setMounted] = useState(false);
   const nearBottom = useRef(true);
+  const attach = useCallback((el) => {
+    node.current = el;
+    setMounted(Boolean(el));
+  }, []);
 
   useEffect(() => {
-    if (!el) return undefined;
+    const el = node.current;
+    if (!mounted || !el) return undefined;
     const onScroll = () => {
       nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [el]);
+  }, [mounted]);
 
   useLayoutEffect(() => {
+    const el = node.current;
     if (el && (nearBottom.current || lastIsMine)) el.scrollTop = el.scrollHeight;
-  }, [el, count, lastIsMine]);
+  }, [mounted, count, lastIsMine]);
 
-  return setEl;
+  return attach;
 }
 
 export default function ForumScreen({ locationId, initialTab, initialQuestionId }) {

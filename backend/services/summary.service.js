@@ -44,41 +44,36 @@ function getClient() {
   return client;
 }
 
-/** Forums whose Updates channel has enough new activity for a new summary. */
+/** Facilities whose Updates have enough new activity for a new summary. */
 async function findForumsNeedingSummary() {
   const c = SUMMARY_CONFIG;
   const { rows } = await pool.query(
     `WITH last AS (
-       SELECT DISTINCT ON (forum_id) forum_id, last_message_id, created_at
+       SELECT DISTINCT ON (facility_id) facility_id, last_update_id, created_at
          FROM forum_summaries
-        WHERE channel = 'updates'
-        ORDER BY forum_id, created_at DESC
+        ORDER BY facility_id, created_at DESC
      )
-     SELECT m.forum_id,
+     SELECT u.facility_id,
             COUNT(*) AS new_count,
             last.created_at AS last_summary_at
-       FROM messages m
-       LEFT JOIN last ON last.forum_id = m.forum_id
-      WHERE m.channel = 'updates'
-        AND m.deleted_at IS NULL
-        AND m.created_at > now() - make_interval(hours => $1)
-        AND m.id > COALESCE(last.last_message_id, 0)
-      GROUP BY m.forum_id, last.created_at
+       FROM updates u
+       LEFT JOIN last ON last.facility_id = u.facility_id
+      WHERE u.created_at > now() - make_interval(hours => $1)
+        AND u.id > COALESCE(last.last_update_id, 0)
+      GROUP BY u.facility_id, last.created_at
      HAVING (last.created_at IS NULL AND COUNT(*) >= $2)
          OR COUNT(*) >= $3
          OR last.created_at < now() - make_interval(mins => $4)`,
     [c.maxAgeHours, c.minForFirstSummary, c.minNewMessages, c.refreshAfterMinutes]
   );
-  return rows.map((r) => r.forum_id);
+  return rows.map((r) => r.facility_id);
 }
 
 async function recentUpdates(forumId) {
   const { rows } = await pool.query(
-    `SELECT id, content, location_verified, created_at
-       FROM messages
-      WHERE forum_id = $1
-        AND channel = 'updates'
-        AND deleted_at IS NULL
+    `SELECT id, body AS content, location_verified, created_at
+       FROM updates
+      WHERE facility_id = $1
         AND created_at > now() - make_interval(hours => $2)
       ORDER BY id DESC
       LIMIT $3`,
@@ -139,8 +134,8 @@ export async function summariseForum(forumId) {
 
   const { rows } = await pool.query(
     `INSERT INTO forum_summaries
-       (forum_id, channel, summary, message_count, last_message_id, important)
-     VALUES ($1, 'updates', $2, $3, $4, $5)
+       (facility_id, summary, message_count, last_update_id, important)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [forumId, result.summary, messages.length, messages.at(-1).id, result.important]
   );
