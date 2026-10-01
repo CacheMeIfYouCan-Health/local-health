@@ -142,3 +142,45 @@ export function sortByDistance(facilities) {
 export function nearestEmergencyFacility(facilities) {
   return sortByDistance(facilities).find((f) => isEmergencyCapable(f) && bestEmergencyNumber(f)) ?? null;
 }
+
+// ---------------------------------------------------------------------------
+// Community forum (same backend as the web forum). A facility's forum is
+// identified by the facility id. Reading is public; posting needs a token.
+// ---------------------------------------------------------------------------
+
+const forumPath = (facilityId) => `/forums/${encodeURIComponent(facilityId)}`;
+
+/** → { forum, updates, questions, summary } */
+export function getForum(facilityId, token) {
+  return request(`/forums/location/${encodeURIComponent(facilityId)}`, { token });
+}
+
+/** latitude/longitude are only used server-side for the "At facility" check. */
+export function postForumUpdate(facilityId, { content, latitude, longitude }, token) {
+  return request(`${forumPath(facilityId)}/messages`, {
+    method: 'POST',
+    body: { content, latitude, longitude },
+    token,
+  });
+}
+
+export function postForumQuestion(facilityId, content, token) {
+  return request(`${forumPath(facilityId)}/questions`, { method: 'POST', body: { content }, token });
+}
+
+/** → { question, replies } */
+export function getQuestionReplies(questionId) {
+  return request(`/questions/${questionId}/replies`);
+}
+
+export function postQuestionReply(questionId, content, token) {
+  return request(`/questions/${questionId}/replies`, { method: 'POST', body: { content }, token });
+}
+
+export function joinForum(facilityId, token) {
+  return request(`${forumPath(facilityId)}/join`, { method: 'POST', body: {}, token });
+}
+
+export function leaveForum(facilityId, token) {
+  return request(`${forumPath(facilityId)}/leave`, { method: 'POST', body: {}, token });
+}
