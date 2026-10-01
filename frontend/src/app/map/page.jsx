@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import RadiusControl from '@components/map/RadiusControl';
 import { fetchNearbyFacilities } from '@lib/api';
@@ -11,35 +12,19 @@ const DEFAULT_RADIUS_KM = 15;
 const MIN_RADIUS_KM = 1;
 const MAX_RADIUS_KM = 50;
 
-// Leaflet touches `window`, so the map is client-only.
 const FacilityMapView = dynamic(() => import('@components/map/FacilityMapView'), {
   ssr: false,
   loading: () => <MapSkeleton message="Loading map…" />,
 });
 
-/* =================================================================
- * Location permission states
- *   checking     -> asking the Permissions API
- *   prompt       -> browser will ask; waiting on the user's click
- *   requesting   -> native permission dialog is open
- *   granted      -> we have a fix
- *   denied       -> user blocked location; manual pick enabled
- *   unavailable  -> device could not produce a fix (timeout, GPS off)
- *   unsupported  -> no geolocation API at all
- * =============================================================== */
-
 export default function FacilityMap() {
   const router = useRouter();
 
   const [permission, setPermission] = useState('checking');
-  const [location, setLocation] = useState(null); // { lat, lng, accuracy, source }
-  const [facilities, setFacilities] = useState([]);
+  const [location, setLocation] = useState(null);
   const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
   const [debouncedRadius, setDebouncedRadius] = useState(DEFAULT_RADIUS_KM);
-  const [meta, setMeta] = useState(null);
   const [activeId, setActiveId] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
 
   const activeIdRef = useRef(null);
 
@@ -48,17 +33,13 @@ export default function FacilityMap() {
     setActiveId(id);
   }, []);
 
-  /* ---------------------------------------------------------------
-   * 1. Ask the browser what it already knows about our permission
-   * ------------------------------------------------------------- */
+  /* ---- location permission ---- */
   const requestLocation = useCallback(() => {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
       setPermission('unsupported');
       return;
     }
-
     setPermission('requesting');
-    setError(null);
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -71,7 +52,6 @@ export default function FacilityMap() {
         setPermission('granted');
       },
       (err) => {
-        // 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
         setPermission(err.code === 1 ? 'denied' : 'unavailable');
       },
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 }
@@ -85,71 +65,55 @@ export default function FacilityMap() {
 
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
         if (!cancelled) setPermission('unsupported');
         return;
       }
-
       try {
         const status = await navigator.permissions?.query({ name: 'geolocation' });
         if (cancelled) return;
-
-        if (status?.state === 'granted') {
-          requestLocation();
-          return;
-        }
-        if (status?.state === 'denied') {
-          setPermission('denied');
-          return;
-        }
-      } catch {
-        // Permissions API not supported (Safari < 16). Fall through to the prompt.
-      }
-
+        if (status?.state === 'granted') return requestLocation();
+        if (status?.state === 'denied') return setPermission('denied');
+      } catch {}
       if (!cancelled) setPermission('prompt');
     })();
-
     return () => {
       cancelled = true;
     };
   }, [requestLocation]);
 
-  /* ---------------------------------------------------------------
-   * 2. Fetch facilities whenever the origin changes
-   * ------------------------------------------------------------- */
+  /* ---- TanStack query for facilities ---- */
+  const {
+    data,
+    isPending,
+    isFetching,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['facilities', location?.lat, location?.lng, debouncedRadius],
+    queryFn: ({ signal }) =>
+      fetchNearbyFacilities({
+        lat: location.lat,
+        lng: location.lng,
+        radiusKm: debouncedRadius,
+        signal,
+      }),
+    enabled: !!location,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+
+  const facilities = data?.facilities ?? [];
+  const meta = data?.meta ?? null;
+  const loading = isPending || isFetching;
+  const error = queryError?.message ?? null;
+
+  /* Clear selected marker when the query key changes */
   useEffect(() => {
-    if (!location) return;
-
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
     setActive(null);
+  }, [location?.lat, location?.lng, debouncedRadius, setActive]);
 
-fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: debouncedRadius })      .then((payload) => {
-        if (cancelled) return;
-        setFacilities(payload.facilities);
-        setMeta(payload.meta);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [location, debouncedRadius, setActive]);
-
-  /* ---------------------------------------------------------------
-   * 3. Marker interaction
-   *    first tap  -> bubble with the facility name
-   *    second tap -> facility detail page
-   * ------------------------------------------------------------- */
+  /* ---- marker + manual pick ---- */
   const handleMarkerActivate = useCallback(
     (facility) => {
       if (activeIdRef.current === facility.id) {
@@ -161,14 +125,10 @@ fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: debounce
     [router, setActive]
   );
 
-  /* Manual origin when the device location is blocked or unusable */
-  const handleManualPick = useCallback(
-    ({ lat, lng }) => {
-      setLocation({ lat, lng, accuracy: null, source: 'manual' });
-      setPermission('granted');
-    },
-    []
-  );
+  const handleManualPick = useCallback(({ lat, lng }) => {
+    setLocation({ lat, lng, accuracy: null, source: 'manual' });
+    setPermission('granted');
+  }, []);
 
   const showGate =
     permission === 'checking' ||
@@ -179,8 +139,6 @@ fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: debounce
     permission === 'unsupported';
 
   const canPickOnMap = permission === 'denied' || permission === 'unavailable';
-  const MIN_RADIUS_KM = 1;
-  const MAX_RADIUS_KM = 50; 
 
   return (
     <div className="fixed inset-0 isolate z-0">
@@ -209,14 +167,6 @@ fetchNearbyFacilities({ lat: location.lat, lng: location.lng, radiusKm: debounce
       />
 
       <MapHint state={activeId ? 'selected' : 'idle'} />
-
-      <RadiusControl
-        value={radiusKm}
-        min={MIN_RADIUS_KM}
-        max={MAX_RADIUS_KM}
-        loading={loading}
-        onChange={setRadiusKm}
-      />
 
       <RadiusControl
         value={radiusKm}

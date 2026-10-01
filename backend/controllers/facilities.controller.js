@@ -4,6 +4,9 @@ import {
   findRecentQueueReports,
   createQueueReport,
   findQueueSummariesFor,
+  createQueueSession,
+  findQueueSessionById,
+  closeQueueSession,
 } from '../services/facilities.service.js';
 import { notFound } from '../utils/httpError.js';
 
@@ -77,7 +80,7 @@ export async function postQueueReport(req, res) {
   const facility = await findFacilityById(id);
   if (!facility) throw notFound('Facility not found');
 
-  const report = await createQueueReport({ facilityId: id, ...req.body });
+  const report = await createQueueReport({ facility, ...req.body });
   res.status(201).json({ report });
 }
 
@@ -104,4 +107,61 @@ function summariseQueue(reports) {
     sampleSize: scored.length,
     lastReportedAt: reports[0].created_at,
   };
+}
+
+/** POST /api/facilities/:id/queue-sessions */
+export async function postCheckIn(req, res) {
+  const { id } = req.validated;
+  const facility = await findFacilityById(id);
+  if (!facility) throw notFound('Facility not found');
+
+  const row = await createQueueSession({
+    facility,
+    queueType: req.body.queueType,
+    peopleAhead: req.body.peopleAhead ?? null,
+    peopleAheadBucket: req.body.peopleAheadBucket ?? null,
+    locationVerified: !!req.body.locationVerified,
+  });
+
+  res.status(201).json({
+    session: {
+      sessionId: row.session_id,
+      facilityId: row.facility_id,
+      queueType: row.queue_type,
+      peopleAhead: row.people_ahead,
+      peopleAheadBucket: row.people_ahead_bucket,
+      locationVerified: row.location_verified,
+      checkInAt: row.check_in_at,
+      checkOutAt: row.check_out_at,
+      waitMinutes: row.wait_minutes,
+    },
+  });
+}
+
+/** POST /api/facilities/:id/queue-sessions/:sessionId/checkout */
+export async function postCheckOut(req, res) {
+  const { id, sessionId } = req.validated;
+  const facility = await findFacilityById(id);
+  if (!facility) throw notFound('Facility not found');
+
+  const session = await findQueueSessionById(sessionId);
+  if (!session || session.facility_external_id !== id) {
+    throw notFound('Session not found');
+  }
+
+  const checkOutAt = new Date();
+  const waitMinutes = Math.max(
+    0,
+    Math.round((checkOutAt - new Date(session.check_in_at)) / 60000)
+  );
+
+  await closeQueueSession(sessionId, checkOutAt, waitMinutes);
+
+  res.json({
+    sessionId,
+    facilityId: id,
+    checkInAt: session.check_in_at,
+    checkOutAt: checkOutAt.toISOString(),
+    waitMinutes,
+  });
 }

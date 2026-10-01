@@ -1,15 +1,11 @@
-/**
- * MOCK IMPLEMENTATION.
- *
- * Every function maps 1:1 to a backend endpoint. When the API is ready,
- * replace the bodies with fetch() calls and delete `delay` — the signatures
- * and return shapes are the contract. Nothing else in the app should change.
- */
+import { postQueueReport } from '@lib/api';
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:4000/api';
 
-let sessionCounter = 0;
-const nextSessionId = () => `local-${Date.now()}-${(sessionCounter += 1)}`;
+async function parseError(res, fallback) {
+  const body = await res.json().catch(() => ({}));
+  return new Error(body.error ?? fallback ?? `Request failed (${res.status})`);
+}
 
 export async function checkIn({
   facilityId,
@@ -17,63 +13,31 @@ export async function checkIn({
   peopleAhead,
   peopleAheadBucket,
   locationVerified,
+  signal,
 }) {
-  await delay(400);
-  return {
-    sessionId: nextSessionId(),
-    facilityId,
-    queueType,
-    peopleAhead,
-    peopleAheadBucket,
-    locationVerified,
-    checkInAt: new Date().toISOString(),
-  };
+  const res = await fetch(`${API_BASE}/facilities/${facilityId}/queue-sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queueType, peopleAhead, peopleAheadBucket, locationVerified }),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res, 'Could not check in');
+  const { session } = await res.json();
+  return session;
 }
 
-/**
- * Mock aggregated status. Replace with GET /api/facilities/:id/queue/status
- * when the backend exists. Shape is the contract.
- *
- * congestionLevel: 'low' | 'moderate' | 'high' | 'unknown'
- */
-export async function getQueueStatus({ facilityId, queueType }) {
-  await delay(300);
-
-  // Deterministic mock keyed off facility + queue so it feels stable across
-  // re-renders but changes per queue type. Delete once real data exists.
-  const seed = `${facilityId}:${queueType || 'all'}`
-    .split('')
-    .reduce((a, c) => a + c.charCodeAt(0), 0);
-
-  const levels = ['low', 'moderate', 'high'];
-  const congestionLevel = levels[seed % levels.length];
-
-  const baseWait = { low: 18, moderate: 47, high: 96 }[congestionLevel];
-  const jitter = (seed % 11) - 5;
-
-  return {
-    facilityId,
-    queueType: queueType ?? null,
-    congestionLevel,
-    averageWaitMinutes: Math.max(5, baseWait + jitter),
-    sampleSize: 3 + (seed % 14),
-    lastReportedAt: new Date(Date.now() - (seed % 25) * 60000).toISOString(),
-    breakdown: [
-      { queueType: 'general', congestionLevel: 'high', averageWaitMinutes: 102, sampleSize: 9 },
-      { queueType: 'pharmacy', congestionLevel: 'low', averageWaitMinutes: 12, sampleSize: 5 },
-      { queueType: 'chronic', congestionLevel: 'moderate', averageWaitMinutes: 58, sampleSize: 4 },
-    ],
-  };
-}
-
-export async function checkOut({ facilityId, sessionId, checkInAt }) {
-  await delay(400);
-  const checkOutAt = new Date().toISOString();
-  const waitMinutes = Math.max(
-    0,
-    Math.round((new Date(checkOutAt) - new Date(checkInAt)) / 60000),
+export async function checkOut({ facilityId, sessionId, checkInAt, signal }) {
+  const res = await fetch(
+    `${API_BASE}/facilities/${facilityId}/queue-sessions/${sessionId}/checkout`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checkInAt }),
+      signal,
+    }
   );
-  return { sessionId, facilityId, checkInAt, checkOutAt, waitMinutes };
+  if (!res.ok) throw await parseError(res, 'Could not check out');
+  return res.json();
 }
 
 export async function submitReport({
@@ -82,15 +46,11 @@ export async function submitReport({
   peopleAhead,
   peopleAheadBucket,
   locationVerified,
+  signal,
 }) {
-  await delay(400);
-  return {
-    reportId: `r-${Date.now()}`,
+  return postQueueReport(
     facilityId,
-    queueType,
-    peopleAhead,
-    peopleAheadBucket,
-    locationVerified,
-    reportedAt: new Date().toISOString(),
-  };
+    { queueType, peopleAhead, peopleAheadBucket, locationVerified },
+    { signal }
+  );
 }
