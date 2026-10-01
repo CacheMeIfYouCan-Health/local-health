@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import RadiusControl from '@components/map/RadiusControl';
 import { fetchNearbyFacilities } from '@lib/api';
+import { fetchMe } from '@lib/auth';
 import MapHint from '@components/map/MapHint';
 
 const DEFAULT_RADIUS_KM = 15;
@@ -19,6 +20,15 @@ const FacilityMapView = dynamic(() => import('@components/map/FacilityMapView'),
 
 export default function FacilityMap() {
   const router = useRouter();
+
+  /* ---- auth: 401 = guest ---- */
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: fetchMe,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const signedIn = !!me;
 
   const [permission, setPermission] = useState('checking');
   const [location, setLocation] = useState(null);
@@ -116,13 +126,18 @@ export default function FacilityMap() {
   /* ---- marker + manual pick ---- */
   const handleMarkerActivate = useCallback(
     (facility) => {
+      if (facility.id == null) return; // no id, no page, no forum
+
       if (activeIdRef.current === facility.id) {
-        router.push(`/facilities/${facility.id}`);
+        const target = `/facilities/${facility.id}`;
+        router.push(
+          signedIn ? target : `/login?next=${encodeURIComponent(target)}`
+        );
         return;
       }
       setActive(facility.id);
     },
-    [router, setActive]
+    [router, setActive, signedIn]
   );
 
   const handleManualPick = useCallback(({ lat, lng }) => {
