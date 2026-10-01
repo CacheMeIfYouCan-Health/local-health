@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "LocalHealth",
     "slug": "mobile",
     "version": "1.0.0",
     "scheme": "mobile",
@@ -26,7 +26,14 @@
       "expo-router",
       "expo-status-bar",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "LocalHealth uses your location to find clinics, hospitals and pharmacies near you and save them for offline use."
+        }
+      ]
     ],
     "extra": {
       "router": {},

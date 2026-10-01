@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react';
-import {
-  View, Text, ScrollView, TextInput, StyleSheet, Pressable,
-  KeyboardAvoidingView, Platform, Alert,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, PrimaryButton, SecondaryButton, MetaLabel } from '@/components/ui';
-import { colors, spacing, radius } from '@/lib/theme';
+import { View, Text, TextInput, StyleSheet, Alert, Switch, Platform } from 'react-native';
+import Screen from '@/components/screen';
+import { Card, PrimaryButton, SecondaryButton, MetaLabel, Chip, Field as UIField, Touchable } from '@/components/ui';
+import { colors, spacing, radius, touch } from '@/lib/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEY = 'medical_profile';
@@ -43,9 +40,10 @@ export default function Medical() {
 
   const update = (patch) => setProfile((p) => ({ ...p, ...patch }));
 
+  // Personal medical info never leaves the phone — it is not sent to the backend.
   const save = async () => {
     await AsyncStorage.setItem(KEY, JSON.stringify(profile));
-    Alert.alert('Saved', 'Medical info stored on this device.');
+    Alert.alert('Saved', 'Your medical info is stored only on this phone.');
   };
 
   const toggleCondition = (c) => {
@@ -59,14 +57,11 @@ export default function Medical() {
   if (!loaded) return null;
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
-        <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
-          <Text style={s.title}>Medical info</Text>
-          <Text style={s.sub}>Stored only on this device.</Text>
+    <Screen
+      keyboard
+      title="Medical info"
+      subtitle="Details a doctor or paramedic may need in an emergency. Stored only on this phone — never uploaded."
+    >
 
           <Card>
             <MetaLabel>Personal</MetaLabel>
@@ -115,14 +110,9 @@ export default function Medical() {
           <Card>
             <MetaLabel>Conditions</MetaLabel>
             <View style={s.chipWrap}>
-              {COMMON_CONDITIONS.map((c) => {
-                const on = profile.conditions.includes(c);
-                return (
-                  <Pressable key={c} onPress={() => toggleCondition(c)} style={[s.chip, on && s.chipOn]}>
-                    <Text style={[s.chipText, on && s.chipTextOn]}>{c}</Text>
-                  </Pressable>
-                );
-              })}
+              {COMMON_CONDITIONS.map((c) => (
+                <Chip key={c} label={c} selected={profile.conditions.includes(c)} onPress={() => toggleCondition(c)} />
+              ))}
             </View>
           </Card>
 
@@ -137,27 +127,13 @@ export default function Medical() {
             <Field value={profile.notes} onChangeText={(v) => update({ notes: v })} multiline height={100} />
           </Card>
 
-          <PrimaryButton onPress={save}>Save</PrimaryButton>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+          <PrimaryButton onPress={save} icon="save-outline">Save medical info</PrimaryButton>
+    </Screen>
   );
 }
 
-function Field({ label, value, onChangeText, multiline, height, ...rest }) {
-  return (
-    <View style={{ marginTop: spacing.md }}>
-      {label ? <Text style={s.fieldLabel}>{label}</Text> : null}
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholderTextColor={colors.gray400}
-        style={[s.input, multiline && { height: height || 80, textAlignVertical: 'top' }]}
-        multiline={multiline}
-        {...rest}
-      />
-    </View>
-  );
+function Field(props) {
+  return <UIField {...props} />;
 }
 
 function Segmented({ label, options, value, onSelect, wrap }) {
@@ -165,14 +141,9 @@ function Segmented({ label, options, value, onSelect, wrap }) {
     <View style={{ marginTop: spacing.md }}>
       <Text style={s.fieldLabel}>{label}</Text>
       <View style={s.chipWrap}>
-        {options.map((o) => {
-          const on = value === o;
-          return (
-            <Pressable key={o} onPress={() => onSelect(o)} style={[s.chip, on && s.chipOn]}>
-              <Text style={[s.chipText, on && s.chipTextOn]}>{o}</Text>
-            </Pressable>
-          );
-        })}
+        {options.map((o) => (
+          <Chip key={o} label={o} selected={value === o} onPress={() => onSelect(o)} />
+        ))}
       </View>
     </View>
   );
@@ -180,12 +151,17 @@ function Segmented({ label, options, value, onSelect, wrap }) {
 
 function Toggle({ label, value, onToggle }) {
   return (
-    <Pressable onPress={() => onToggle(!value)} style={s.toggleRow}>
+    <View style={s.toggleRow}>
       <Text style={s.toggleLabel}>{label}</Text>
-      <View style={[s.switch, value && s.switchOn]}>
-        <View style={s.knob} />
-      </View>
-    </Pressable>
+      <Switch
+        value={value}
+        onValueChange={onToggle}
+        accessibilityLabel={label}
+        trackColor={{ false: colors.gray300, true: Platform.OS === 'android' ? colors.emerald100 : colors.emerald600 }}
+        thumbColor={Platform.OS === 'android' ? (value ? colors.emerald600 : colors.gray50) : undefined}
+        ios_backgroundColor={colors.gray300}
+      />
+    </View>
   );
 }
 
@@ -209,52 +185,41 @@ function ListSection({ title, items, fields, placeholders, onChange }) {
               style={[s.input, { marginTop: j > 0 ? spacing.sm : 0 }]}
             />
           ))}
-          <Pressable onPress={() => removeItem(i)} style={s.removeBtn}>
+          <Touchable onPress={() => removeItem(i)} style={s.removeBtn} accessibilityRole="button">
             <Text style={s.removeText}>Remove</Text>
-          </Pressable>
+          </Touchable>
         </View>
       ))}
-      <SecondaryButton onPress={add}>+ Add {title.toLowerCase()}</SecondaryButton>
+      {items.length === 0 ? (
+        <Text style={s.emptyText}>None added. Tap below to add one.</Text>
+      ) : null}
+      <SecondaryButton icon="add" onPress={add}>Add {title === 'Allergies' ? 'an allergy' : 'a medication'}</SecondaryButton>
     </Card>
   );
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.white },
-  container: { padding: spacing.xl, paddingBottom: 96 },
-  title: { fontSize: 22, fontWeight: '700', color: colors.gray900 },
-  sub: { fontSize: 13, color: colors.gray500, marginBottom: spacing.lg },
-  fieldLabel: { fontSize: 12, fontWeight: '600', color: colors.gray500, marginBottom: 4 },
+  fieldLabel: { fontSize: 14, fontWeight: '600', color: colors.textMuted, marginBottom: 6 },
   input: {
-    borderWidth: 1, borderColor: colors.gray200, borderRadius: radius.md,
-    padding: spacing.md, fontSize: 15, color: colors.gray900,
-    backgroundColor: colors.white,
+    minHeight: touch, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? spacing.md : spacing.sm,
+    fontSize: 16, color: colors.text, backgroundColor: colors.input,
   },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
-  chip: {
-    paddingHorizontal: spacing.md, paddingVertical: 6,
-    borderRadius: 999, borderWidth: 1, borderColor: colors.gray200,
-    backgroundColor: colors.white,
-  },
-  chipOn: { backgroundColor: colors.emerald50, borderColor: colors.emerald600 },
-  chipText: { fontSize: 13, color: colors.gray500, fontWeight: '500' },
-  chipTextOn: { color: colors.emerald700, fontWeight: '700' },
   toggleRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingVertical: spacing.md, marginTop: spacing.sm,
-    borderTopWidth: 1, borderTopColor: colors.gray200,
+    minHeight: touch, marginTop: spacing.sm,
+    borderTopWidth: 1, borderTopColor: colors.borderSoft,
   },
-  toggleLabel: { fontSize: 15, color: colors.gray900, fontWeight: '500' },
-  switch: {
-    width: 44, height: 26, borderRadius: 13, backgroundColor: colors.gray200,
-    flexDirection: 'row', alignItems: 'center', padding: 2,
-  },
-  switchOn: { backgroundColor: colors.emerald600, justifyContent: 'flex-end' },
-  knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.white },
+  toggleLabel: { fontSize: 16, color: colors.text, fontWeight: '500' },
   listItem: {
-    marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.gray200,
+    marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.borderSoft,
     paddingTop: spacing.md,
   },
-  removeBtn: { marginTop: spacing.sm, alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 8 },
-  removeText: { fontSize: 13, color: colors.red600, fontWeight: '600' },
+  removeBtn: {
+    marginTop: spacing.sm, alignSelf: 'flex-end', minHeight: touch, justifyContent: 'center',
+    paddingHorizontal: spacing.md, borderRadius: radius.md,
+  },
+  removeText: { fontSize: 15, color: colors.red600, fontWeight: '600' },
+  emptyText: { fontSize: 14, color: colors.textSubtle, marginTop: spacing.sm },
 });

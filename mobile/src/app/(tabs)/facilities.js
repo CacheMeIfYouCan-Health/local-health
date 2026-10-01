@@ -1,83 +1,163 @@
-import { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { useMemo, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, PrimaryButton, MetaLabel, Row } from '@/components/ui';
-import { colors, spacing } from '@/lib/theme';
-import { getCachedFacilities, fetchNearbyFacilities, filterAmbulance } from '@/lib/api';
+import { Chip, EmptyState, Touchable, Ionicons, PrimaryButton } from '@/components/ui';
+import FacilitiesStatus from '@/components/facilities-status';
+import { colors, spacing, radius, touch, font, shadow } from '@/lib/theme';
+import { sortByDistance, isEmergencyCapable } from '@/lib/api';
+import { FACILITY_TYPES, formatDistance, facilityTypeLabel } from '@/lib/format';
 import { callNumber } from '@/lib/dialer';
+import { useFacilities, refreshFacilities } from '@/features/facilities/store';
 
-export default function Facilities() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+const FILTERS = [
+  { key: 'all', label: 'All', icon: 'apps-outline' },
+  { key: 'hospital', label: FACILITY_TYPES.hospital.plural, icon: 'medkit-outline' },
+  { key: 'clinic', label: FACILITY_TYPES.clinic.plural, icon: 'medical-outline' },
+  { key: 'pharmacy', label: FACILITY_TYPES.pharmacy.plural, icon: 'bandage-outline' },
+  { key: 'practitioner', label: FACILITY_TYPES.practitioner.plural, icon: 'person-outline' },
+];
 
-  const loadCached = async () => setItems(await getCachedFacilities());
+export default function Nearby() {
+  const state = useFacilities();
+  const [filter, setFilter] = useState('all');
 
-  useEffect(() => { loadCached(); }, []);
+  const all = useMemo(() => sortByDistance(state.cache?.facilities ?? []), [state.cache]);
+  const counts = useMemo(() => {
+    const c = { all: all.length };
+    for (const f of all) c[f.type] = (c[f.type] || 0) + 1;
+    return c;
+  }, [all]);
+  const items = filter === 'all' ? all : all.filter((f) => f.type === filter);
 
-  const refresh = async () => {
-    setLoading(true); setError(null);
-    try {
-      // TODO: replace with real coordinates or a way to get them
-      const data = await fetchNearbyFacilities({ lat: -26.2041, lng: 28.0473 });
-      setItems(data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const header = (
+    <View>
+      <Text style={s.title} accessibilityRole="header">Nearby</Text>
+      <Text style={s.sub}>Clinics, hospitals and pharmacies near you, sorted by distance. Tap the phone to call.</Text>
 
-  const ambulance = filterAmbulance(items);
+      <FacilitiesStatus state={state} />
+
+      {all.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.chips}
+          style={s.chipScroll}
+        >
+          {FILTERS.filter((f) => f.key === 'all' || counts[f.key]).map((f) => (
+            <Chip
+              key={f.key}
+              label={f.label}
+              icon={f.icon}
+              count={counts[f.key] || 0}
+              selected={filter === f.key}
+              onPress={() => setFilter(f.key)}
+            />
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+
+  const empty = state.loading || !state.hydrated ? null : state.cache ? (
+    <EmptyState
+      icon="search-outline"
+      title="Nothing found nearby"
+      message={`No ${filter === 'all' ? 'facilities' : FILTERS.find((f) => f.key === filter)?.label.toLowerCase()} within ${state.cache.radiusKm ?? 25} km of where you were. Tap Update to search again from your current location.`}
+    />
+  ) : !state.error ? (
+    <EmptyState
+      icon="location-outline"
+      title="No facilities saved yet"
+      message="We'll use your location once to find nearby facilities and save them for offline use."
+    >
+      <PrimaryButton icon="locate" onPress={() => refreshFacilities()} style={{ alignSelf: 'stretch' }}>
+        Find facilities near me
+      </PrimaryButton>
+    </EmptyState>
+  ) : null;
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <ScrollView contentContainerStyle={s.container}>
-        <Text style={s.title}>Nearby facilities</Text>
-        <Text style={s.sub}>Cached for offline use.</Text>
-
-        <PrimaryButton onPress={refresh} busy={loading}>
-          {loading ? 'Refreshing…' : 'Refresh from server'}
-        </PrimaryButton>
-
-        {error && <Text style={s.error}>{error}</Text>}
-
-        {ambulance.length > 0 && (
-          <Card>
-            <MetaLabel>Ambulance services</MetaLabel>
-            {ambulance.map((f) => (
-              <Pressable key={f.id} onPress={() => callNumber(f.phone)} style={s.row}>
-                <Text style={s.facName}>{f.name}</Text>
-                <Text style={s.facPhone}>{f.phone}</Text>
-              </Pressable>
-            ))}
-          </Card>
-        )}
-
-        {items.length === 0 && !loading && (
-          <Text style={s.empty}>No facilities cached. Tap refresh.</Text>
-        )}
-
-        {items.filter((f) => !f.hasAmbulance).map((f) => (
-          <Card key={f.id}>
-            <Text style={s.facName}>{f.name}</Text>
-            <Row label="Phone" value={f.phone} accent />
-            <Row label="Address" value={f.address || '—'} />
-          </Card>
-        ))}
-      </ScrollView>
+    <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
+      <FlatList
+        data={items}
+        keyExtractor={(f) => String(f.id)}
+        renderItem={({ item }) => <FacilityRow facility={item} />}
+        ListHeaderComponent={header}
+        ListEmptyComponent={empty}
+        contentContainerStyle={s.container}
+        initialNumToRender={15}
+        keyboardShouldPersistTaps="handled"
+      />
     </SafeAreaView>
   );
 }
 
+function FacilityRow({ facility: f }) {
+  const number = f.phone || f.emergencyPhone;
+  const emergency = isEmergencyCapable(f);
+  const typeIcon = FACILITY_TYPES[f.type]?.icon ?? 'business';
+
+  return (
+    <View style={s.row}>
+      <View style={[s.typeIcon, emergency && { backgroundColor: colors.red50 }]}>
+        <Ionicons name={typeIcon} size={20} color={emergency ? colors.red700 : colors.emerald700} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.name} numberOfLines={2}>{f.name}</Text>
+        <Text style={s.meta} numberOfLines={1}>
+          {facilityTypeLabel(f.type)} · {formatDistance(f.distanceKm)}
+          {f.queue?.avgWaitMinutes != null ? ` · ~${Math.round(f.queue.avgWaitMinutes)} min wait` : ''}
+        </Text>
+        {f.address ? <Text style={s.address} numberOfLines={1}>{f.address}</Text> : null}
+        {f.emergencyPhone && f.emergencyPhone !== f.phone ? (
+          <Touchable onPress={() => callNumber(f.emergencyPhone)} style={s.emergencyLink} hitSlop={8} accessibilityRole="button">
+            <Ionicons name="alert-circle" size={15} color={colors.red700} />
+            <Text style={s.emergencyText}>Emergency: {f.emergencyPhone}</Text>
+          </Touchable>
+        ) : null}
+      </View>
+      {number ? (
+        <Touchable
+          onPress={() => callNumber(number)}
+          accessibilityRole="button"
+          accessibilityLabel={`Call ${f.name} on ${number}`}
+          rippleColor="rgba(255,255,255,0.3)"
+          style={s.callBtn}
+        >
+          <Ionicons name="call" size={20} color={colors.white} />
+        </Touchable>
+      ) : (
+        <Text style={s.noPhone}>No phone</Text>
+      )}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.white },
-  container: { padding: spacing.xl, paddingBottom: 96 },
-  title: { fontSize: 22, fontWeight: '700', color: colors.gray900 },
-  sub: { fontSize: 13, color: colors.gray500, marginBottom: spacing.lg },
-  error: { color: colors.red600, marginTop: spacing.md, fontSize: 13 },
-  empty: { color: colors.gray500, textAlign: 'center', marginTop: spacing.xxl },
-  row: { paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.gray200 },
-  facName: { fontSize: 15, fontWeight: '700', color: colors.gray900 },
-  facPhone: { fontSize: 14, color: colors.blue700 || '#1d4ed8', fontWeight: '600', marginTop: 2 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  container: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl * 2 },
+  title: { fontSize: font.title, fontWeight: '800', color: colors.text },
+  sub: { fontSize: 15, color: colors.textMuted, marginTop: 4, marginBottom: spacing.lg, lineHeight: 21 },
+  chipScroll: { marginHorizontal: -spacing.lg, marginBottom: spacing.md },
+  chips: { gap: spacing.sm, paddingHorizontal: spacing.lg },
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSoft,
+    borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.sm,
+    ...shadow(1),
+  },
+  typeIcon: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.emerald50,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  name: { fontSize: 16, fontWeight: '700', color: colors.text },
+  meta: { fontSize: 14, color: colors.textMuted, marginTop: 2 },
+  address: { fontSize: 13, color: colors.textSubtle, marginTop: 2 },
+  emergencyLink: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, minHeight: 32, alignSelf: 'flex-start', borderRadius: radius.sm },
+  emergencyText: { fontSize: 14, fontWeight: '700', color: colors.red700 },
+  callBtn: {
+    width: touch, height: touch, borderRadius: touch / 2, backgroundColor: colors.emerald600,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  noPhone: { fontSize: 12, color: colors.gray400, width: touch, textAlign: 'center' },
 });

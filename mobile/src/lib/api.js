@@ -1,76 +1,144 @@
-import { list, save } from './storage';
-
-// TODO: replace with your real backend base URL
-const BASE_URL = 'https://your-web-app.com';
-
-const FACILITIES_KEY = 'facilities';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
- * Facility shape (mock):
- * {
- *   id: string,
- *   name: string,
- *   phone: string,
- *   address: string,
- *   hasAmbulance: boolean,
- *   lat: number,
- *   lng: number,
- *   type: 'clinic' | 'hospital' | 'health_centre'
- * }
+ * Backend base URL (Express API).
+ *
+ * Set EXPO_PUBLIC_API_BASE in mobile/.env (see .env.example). EXPO_PUBLIC_*
+ * variables are inlined at bundle time, so restart `npx expo start` after
+ * changing it.
+ *
+ * NOTE: `localhost` only works in an emulator/simulator on the same machine
+ * (and on the Android emulator you may need http://10.0.2.2:4000/api). On a
+ * physical phone this must be your computer's LAN IP, e.g.
+ * http://192.168.x.x:4000/api, with the phone on the same Wi-Fi network.
  */
+export const API_BASE = (process.env.EXPO_PUBLIC_API_BASE || 'http://localhost:4000/api').replace(/\/+$/, '');
 
-const MOCK_FACILITIES = [
-  {
-    id: 'f1',
-    name: 'Charlotte Maxeke Hospital',
-    phone: '0114884000',
-    address: 'Parktown, Johannesburg',
-    hasAmbulance: true,
-    lat: -26.1775,
-    lng: 28.0397,
-    type: 'hospital',
-  },
-  {
-    id: 'f2',
-    name: 'Chris Hani Baragwanath',
-    phone: '0119338000',
-    address: 'Soweto, Johannesburg',
-    hasAmbulance: true,
-    lat: -26.2606,
-    lng: 27.9436,
-    type: 'hospital',
-  },
-  {
-    id: 'f3',
-    name: 'Hillbrow Clinic',
-    phone: '0114803300',
-    address: 'Hillbrow, Johannesburg',
-    hasAmbulance: false,
-    lat: -26.2013,
-    lng: 28.0495,
-    type: 'clinic',
-  },
-];
+const DEFAULT_TIMEOUT_MS = 15000;
+// The first nearby lookup for an area queries OpenStreetMap and can take
+// 5–25 s, so give it plenty of headroom.
+const FACILITIES_TIMEOUT_MS = 40000;
 
-export async function fetchNearbyFacilities({ lat, lng }) {
-  // MOCK: returns fixtures after a short delay.
-  // Swap for real fetch when backend is ready:
-  //
-  // const res = await fetch(`${BASE_URL}/api/facilities/nearby?lat=${lat}&lng=${lng}`);
-  // if (!res.ok) throw new Error(`Facilities fetch failed: ${res.status}`);
-  // const data = await res.json();
+export class ApiError extends Error {
+  constructor(message, { status, kind } = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;       // HTTP status, if any
+    this.kind = kind;           // 'http' | 'network' | 'timeout'
+  }
+}
 
-  await new Promise((r) => setTimeout(r, 400));
-  const data = MOCK_FACILITIES;
+async function request(path, { method = 'GET', body, token, timeout = DEFAULT_TIMEOUT_MS } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: {
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json' } : null),
+        ...(token ? { Authorization: `Bearer ${token}` } : null),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      throw new ApiError('The server took too long to respond. Please try again.', { kind: 'timeout' });
+    }
+    throw new ApiError(
+      "Can't reach the LocalHealth server. Check your internet connection and try again.",
+      { kind: 'network' },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 
-  await save(FACILITIES_KEY, data);
+  let data = null;
+  try { data = await res.json(); } catch { /* empty or non-JSON body */ }
+
+  if (!res.ok) {
+    throw new ApiError(data?.message || `Request failed (${res.status})`, { status: res.status, kind: 'http' });
+  }
   return data;
 }
 
-export async function getCachedFacilities() {
-  return list(FACILITIES_KEY);
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+export function signup({ name, email, password }) {
+  return request('/auth/signup', { method: 'POST', body: { name, email, password } });
 }
 
-export function filterAmbulance(facilities) {
-  return facilities.filter((f) => f.hasAmbulance);
+export function login({ email, password }) {
+  return request('/auth/login', { method: 'POST', body: { email, password } });
+}
+
+export function getMe(token) {
+  return request('/auth/me', { token });
+}
+
+// ---------------------------------------------------------------------------
+// Facilities — fetched once, then served from an offline cache.
+// ---------------------------------------------------------------------------
+
+const FACILITIES_CACHE_KEY = 'facilities_cache_v1';
+
+/**
+ * Calls the backend and returns the raw facility list. Does not touch the
+ * cache; see saveFacilitiesCache.
+ */
+export async function fetchNearbyFacilities({ lat, lng, radiusKm = 25, limit = 200 }) {
+  const qs = `lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&radiusKm=${radiusKm}&limit=${limit}`;
+  const data = await request(`/facilities/nearby?${qs}`, { timeout: FACILITIES_TIMEOUT_MS });
+  return data?.facilities ?? [];
+}
+
+/**
+ * Cache shape:
+ * {
+ *   facilities: Facility[],   // as returned by the API, incl. phone/emergencyPhone
+ *   fetchedAt: number,        // epoch ms
+ *   origin: { lat, lng, isFallback: boolean },
+ *   radiusKm: number,
+ * }
+ */
+export async function getFacilitiesCache() {
+  try {
+    const raw = await AsyncStorage.getItem(FACILITIES_CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveFacilitiesCache(cache) {
+  await AsyncStorage.setItem(FACILITIES_CACHE_KEY, JSON.stringify(cache));
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Hospitals, and any facility that publishes an emergency number, are treated
+ * as emergency-capable (replaces the old mock `hasAmbulance` flag).
+ */
+export function isEmergencyCapable(f) {
+  return f?.type === 'hospital' || !!f?.emergencyPhone;
+}
+
+export function bestEmergencyNumber(f) {
+  return f?.emergencyPhone || f?.phone || null;
+}
+
+export function sortByDistance(facilities) {
+  return [...facilities].sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+}
+
+/** Nearest emergency-capable facility that actually has a number to call. */
+export function nearestEmergencyFacility(facilities) {
+  return sortByDistance(facilities).find((f) => isEmergencyCapable(f) && bestEmergencyNumber(f)) ?? null;
 }

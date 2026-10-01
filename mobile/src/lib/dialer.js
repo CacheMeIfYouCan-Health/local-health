@@ -8,11 +8,25 @@ export const USSD_TEMPLATES = {
   telkom:  '*188*{pin}#',
 };
 
+/** Keep only characters a dialer understands. */
+export function cleanNumber(phone) {
+  return String(phone ?? '').replace(/[^\d+*#]/g, '');
+}
+
+/**
+ * Opens the phone dialer pre-filled with the number; the user still has to
+ * confirm the call. We open the URL directly instead of calling canOpenURL
+ * first, because on iOS canOpenURL needs the scheme whitelisted and can
+ * report false negatives.
+ */
 export async function callNumber(phone) {
-  const url = `tel:${phone.replace(/\s+/g, '')}`;
-  const ok = await Linking.canOpenURL(url);
-  if (!ok) return Alert.alert('Cannot open dialer', url);
-  Linking.openURL(url);
+  const number = cleanNumber(phone);
+  if (!number) return Alert.alert('No number', 'This facility has no phone number saved.');
+  try {
+    await Linking.openURL(`tel:${number}`);
+  } catch {
+    Alert.alert('Cannot open the dialer', `Please dial ${phone} manually.`);
+  }
 }
 
 export function buildUssd(provider, pin) {
