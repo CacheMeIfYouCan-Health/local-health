@@ -350,10 +350,17 @@ const BUCKET_TO_WEIGHT = {
   many: 3,
 };
 
-function congestionFromBucket(bucket) {
-  const w = BUCKET_TO_WEIGHT[bucket] ?? null;
-  if (w === null) return null;
-  return w === 1 ? 'low' : w === 2 ? 'moderate' : 'high';
+function congestionFromBucket(bucket, peopleAhead) {
+  const w = BUCKET_TO_WEIGHT[bucket];
+  if (w != null) return w === 1 ? 'low' : w === 2 ? 'moderate' : 'high';
+
+  // Fallback: infer from peopleAhead count
+  if (typeof peopleAhead === 'number') {
+    if (peopleAhead <= 5) return 'low';
+    if (peopleAhead <= 15) return 'moderate';
+    return 'high';
+  }
+  return null;
 }
 
 export async function createQueueReport({
