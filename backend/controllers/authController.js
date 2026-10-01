@@ -3,9 +3,11 @@ import jwt from 'jsonwebtoken';
 import pool from '../lib/db.js';
 
 const COOKIE = 'token';
+// In production the web app (Vercel) and API live on different sites, and a
+// SameSite=Lax cookie is never sent cross-site, so login would never stick.
 const cookieOpts = {
   httpOnly: true,
-  sameSite: 'lax',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   secure: process.env.NODE_ENV === 'production',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
@@ -15,6 +17,7 @@ const issue = (res, user) => {
     expiresIn: '7d',
   });
   res.cookie(COOKIE, token, cookieOpts);
+  return token;
 };
 
 const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email });
@@ -38,8 +41,8 @@ export async function signup(req, res) {
        RETURNING id, name, email`,
       [name, email, hash]
     );
-    issue(res, rows[0]);
-    res.status(201).json({ user: publicUser(rows[0]) });
+    const token = issue(res, rows[0]);
+    res.status(201).json({ user: publicUser(rows[0]), token });
   } catch (err) {
     if (err.code === '23505')
       return res.status(409).json({ message: 'An account with this email already exists' });
@@ -60,8 +63,8 @@ export async function login(req, res) {
     const user = rows[0];
     const ok = user && (await bcrypt.compare(password, user.password_hash));
     if (!ok) return res.status(401).json({ message: 'Invalid email or password' });
-    issue(res, user);
-    res.json({ user: publicUser(user) });
+    const token = issue(res, user);
+    res.json({ user: publicUser(user), token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Something went wrong' });

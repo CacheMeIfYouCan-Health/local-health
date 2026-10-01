@@ -10,7 +10,7 @@ export default function RadiusControl({
 }) {
   return (
     <div
-      className="absolute bottom-6 left-4 right-4 z-[1200] mx-auto max-w-sm rounded-2xl bg-white/95 p-4 shadow-lg backdrop-blur"
+      className="absolute bottom-6 left-4 right-4 z-[1200] mx-auto max-w-sm rounded-2xl border border-slate-200 bg-slate-50/95 p-4 shadow-lg backdrop-blur"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="mb-2 flex items-center justify-between">

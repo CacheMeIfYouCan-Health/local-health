@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
@@ -26,12 +26,7 @@ export default function FacilityMap() {
   const [debouncedRadius, setDebouncedRadius] = useState(DEFAULT_RADIUS_KM);
   const [activeId, setActiveId] = useState(null);
 
-  const activeIdRef = useRef(null);
-
-  const setActive = useCallback((id) => {
-    activeIdRef.current = id;
-    setActiveId(id);
-  }, []);
+  const setActive = setActiveId;
 
   /* ---- location permission ---- */
   const requestLocation = useCallback(() => {
@@ -108,21 +103,24 @@ export default function FacilityMap() {
   const loading = isPending || isFetching;
   const error = queryError?.message ?? null;
 
-  /* Clear selected marker when the query key changes */
-  useEffect(() => {
-    setActive(null);
-  }, [location?.lat, location?.lng, debouncedRadius, setActive]);
+  /* Clear selected marker when the query key changes (render-time reset) */
+  const searchKey = `${location?.lat}|${location?.lng}|${debouncedRadius}`;
+  const [lastSearchKey, setLastSearchKey] = useState(searchKey);
+  if (searchKey !== lastSearchKey) {
+    setLastSearchKey(searchKey);
+    setActiveId(null);
+  }
 
   /* ---- marker + manual pick ---- */
   const handleMarkerActivate = useCallback(
     (facility) => {
-      if (activeIdRef.current === facility.id) {
+      if (activeId === facility.id) {
         router.push(`/facilities/${facility.id}`);
         return;
       }
       setActive(facility.id);
     },
-    [router, setActive]
+    [router, activeId, setActive]
   );
 
   const handleManualPick = useCallback(({ lat, lng }) => {
@@ -217,7 +215,7 @@ function MapOverlay({
   return (
     <>
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1200] p-4">
-        <div className="pointer-events-auto mx-auto flex max-w-md items-center gap-3 rounded-2xl bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+        <div className="pointer-events-auto mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/95 px-4 py-3 shadow-lg backdrop-blur">
           <span aria-hidden className="text-xl">🏥</span>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-900">
@@ -229,12 +227,12 @@ function MapOverlay({
       </div>
 
       {origin?.source === 'device' && (
-        <div className="absolute bottom-6 right-4 z-[1200]">
+        <div className="absolute bottom-[132px] right-4 z-[1200]">
           <button
             type="button"
             onClick={onRecenter}
             aria-label="Centre map on my location"
-            className="grid h-11 w-11 place-items-center rounded-full bg-white text-lg shadow-lg transition active:scale-95"
+            className="grid h-11 w-11 place-items-center rounded-full border border-slate-200 bg-slate-50 text-lg shadow-lg transition active:scale-95"
           >
             🎯
           </button>
@@ -330,7 +328,7 @@ function PermissionGate({ permission, onRequestLocation, onSkipToMap }) {
 function Backdrop({ children }) {
   return (
     <div className="absolute inset-0 z-[1300] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-slate-50 p-6 text-center shadow-2xl">
         {children}
       </div>
     </div>

@@ -30,9 +30,17 @@ function getCurrentPosition(options) {
  * `reason` is for local UI only — never sent to the backend.
  * The report payload still contains only `locationVerified: boolean`.
  */
+export function facilityCoords(facility) {
+  const latitude = Number(facility?.coords?.latitude ?? facility?.latitude);
+  const longitude = Number(facility?.coords?.longitude ?? facility?.longitude);
+  return Number.isFinite(latitude) && Number.isFinite(longitude)
+    ? { latitude, longitude }
+    : null;
+}
+
 export async function checkFacilityProximity(facility, radiusMeters) {
-  const coords = facility?.coords;
-  if (!coords?.latitude || !coords?.longitude) {
+  const coords = facilityCoords(facility);
+  if (!coords) {
     return { verified: false, reason: 'no_facility_coords' };
   }
 

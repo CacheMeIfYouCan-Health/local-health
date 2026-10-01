@@ -10,7 +10,7 @@ export default function Home() {
 
       <Link
         href="/map"
-        className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-[15px] font-semibold text-gray-900 transition hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+        className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-5 py-3 text-[15px] font-semibold text-gray-900 transition hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
       >
         <span aria-hidden>🗺️</span>
         Open map

@@ -9,7 +9,7 @@ import { queueTypeLabel, peopleAheadLabel } from '@lib/queue/queueConstants';
 import QueueStatusSummary from './QueueStatusSummary';
 
 function Card({ children }) {
-  return <div className="rounded-2xl bg-gray-50 p-5">{children}</div>;
+  return <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">{children}</div>;
 }
 
 function PrimaryButton({ onClick, disabled, busy, children }) {
@@ -40,7 +40,7 @@ function SecondaryButton({ onClick, disabled, children }) {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-5 py-3 text-[15px] font-semibold text-gray-900 transition hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100 disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+      className="mt-2 w-full rounded-xl border border-slate-300 bg-slate-100 px-5 py-3 text-[15px] font-semibold text-gray-900 transition hover:border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100 disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
     >
       {children}
     </button>

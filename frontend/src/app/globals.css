@@ -43,3 +43,10 @@
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
   cursor: pointer;
 }
+/* Match the toned-down surfaces instead of Leaflet's bright white popup. */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
+}

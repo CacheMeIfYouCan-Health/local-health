@@ -2,6 +2,7 @@ import {
   findNearbyFacilities,
   findFacilityById,
   findRecentQueueReports,
+  findRecentAverageWait,
   createQueueReport,
   findQueueSummariesFor,
   createQueueSession,
@@ -52,7 +53,10 @@ export async function getFacility(req, res) {
   const facility = await findFacilityById(id);
   if (!facility) throw notFound('Facility not found');
 
-  const queueReports = await findRecentQueueReports(id);
+  const [queueReports, avgWaitMinutes] = await Promise.all([
+    findRecentQueueReports(id),
+    findRecentAverageWait(id),
+  ]);
 
   res.json({
     facility: {
@@ -69,7 +73,7 @@ export async function getFacility(req, res) {
     },
     queue: {
       reports: queueReports,
-      summary: summariseQueue(queueReports),
+      summary: { ...summariseQueue(queueReports), avgWaitMinutes },
     },
   });
 }
@@ -81,7 +85,20 @@ export async function postQueueReport(req, res) {
   if (!facility) throw notFound('Facility not found');
 
   const report = await createQueueReport({ facility, ...req.body });
-  res.status(201).json({ report });
+
+  // Send the refreshed summary back so the client can show it immediately
+  // instead of waiting for its cached facility query to go stale.
+  const [queueReports, avgWaitMinutes] = await Promise.all([
+    findRecentQueueReports(id),
+    findRecentAverageWait(id),
+  ]);
+  res.status(201).json({
+    report,
+    queue: {
+      reports: queueReports,
+      summary: { ...summariseQueue(queueReports), avgWaitMinutes },
+    },
+  });
 }
 
 /** Reduce the last few reports into a single congestion signal. */

@@ -13,12 +13,18 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
-const USER_AGENT = 'HealthcareAccessPlatform/1.0 (contact: you@example.com)';
+// Overpass answers 406 to the placeholder "you@example.com" contact, which
+// silently pushed every map search onto the 20-facility Johannesburg fallback.
+const USER_AGENT =
+  process.env.OVERPASS_USER_AGENT ??
+  'LocalHealth/1.0 (+https://github.com/CacheMeIfYouCan-Health/local-health)';
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const FALLBACK_TTL_MS = 60 * 1000;
 const MIN_INTERVAL_MS = 3000;
-const OVERPASS_TIMEOUT_MS = 12_000;
+const OVERPASS_TIMEOUT_MS = 25_000;
 const CACHE_TTL_DAYS = 7;
+// Queue reports older than this no longer count towards the current status.
+const QUEUE_WINDOW_HOURS = Number(process.env.QUEUE_WINDOW_HOURS) || 4;
 
 const cache = new Map();
 let lastCallAt = 0;
@@ -64,7 +70,7 @@ function cacheKey({ lat, lng, radiusKm }) {
 
 function buildQuery({ lat, lng, radiusKm }) {
   const r = radiusKm * 1000;
-  return `[out:json][timeout:10];
+  return `[out:json][timeout:25];
 (
   nwr["amenity"~"^(hospital|clinic|pharmacy|doctors)$"](around:${r},${lat},${lng});
 );
@@ -177,8 +183,10 @@ async function readFacilitiesFromDB({ lat, lng, radiusKm, limit, type }) {
   );
 
   const out = [];
-  for (const f of rows) {
+  for (const row of rows) {
+    const f = normaliseRow(row);
     if (type && f.type !== type) continue;
+    if (!Number.isFinite(f.latitude) || !Number.isFinite(f.longitude)) continue;
     const d = distanceKm(lat, lng, f.latitude, f.longitude);
     if (d > radiusKm) continue;
     out.push({ ...f, distance_km: Number(d.toFixed(2)) });
@@ -216,10 +224,23 @@ export async function findNearbyFacilities({ lat, lng, radiusKm, limit, type }) 
   }
 
   const { elements, source } = await getElements({ lat, lng, radiusKm });
-  const fetched =
-    source === 'overpass'
-      ? elements.map(transformOverpass).filter(Boolean)
-      : FALLBACK;
+
+  // Overpass is often overloaded (504) for large radii. Rather than shrinking
+  // the map to the 20 Johannesburg fallback entries, serve what we already
+  // know about this area from the DB, topped up with the fallback list.
+  if (source !== 'overpass') {
+    const known = await readFacilitiesFromDB({ lat, lng, radiusKm, limit, type });
+    const ids = new Set(known.map((f) => f.id));
+    const extra = FALLBACK.filter((f) => !ids.has(f.id))
+      .filter((f) => !type || f.type === type)
+      .map((f) => ({ ...f, distance_km: Number(distanceKm(lat, lng, f.latitude, f.longitude).toFixed(2)) }))
+      .filter((f) => f.distance_km <= radiusKm);
+    const out = [...known, ...extra].sort((a, b) => a.distance_km - b.distance_km);
+    console.log(`[facilities] Overpass unavailable, served ${out.length} from DB + fallback`);
+    return out.slice(0, limit);
+  }
+
+  const fetched = elements.map(transformOverpass).filter(Boolean);
 
   for (const f of fetched) {
     try {
@@ -228,7 +249,9 @@ export async function findNearbyFacilities({ lat, lng, radiusKm, limit, type }) 
       console.warn(`[facilities] upsert failed for ${f.id}:`, err.message);
     }
   }
-  await markRegionFresh(key);
+  // Only remember the region when Overpass actually answered; caching a
+  // fallback result hid that area's real facilities for CACHE_TTL_DAYS.
+  if (source === 'overpass') await markRegionFresh(key);
 
   const out = [];
   for (const f of fetched) {
@@ -242,9 +265,37 @@ export async function findNearbyFacilities({ lat, lng, radiusKm, limit, type }) 
   return out.slice(0, limit);
 }
 
+// pg returns NUMERIC columns as strings; the map drops markers whose
+// coordinates aren't finite numbers, so coerce here once.
+function normaliseRow(row) {
+  return {
+    ...row,
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+    services: row.services ?? [],
+  };
+}
+
+async function readFacilityFromDB(externalId) {
+  const { rows } = await pool.query(
+    `SELECT external_id AS id, name, type, address, phone, emergency_phone,
+            latitude, longitude, operating_hours, services
+       FROM facilities
+      WHERE external_id = $1`,
+    [externalId]
+  );
+  return rows[0] ? normaliseRow(rows[0]) : null;
+}
+
+// Every facility shown on the map was upserted when /nearby served it, so the
+// DB answers almost every lookup. Overpass is only a last resort: it is slow,
+// rate-limited, and used to make facility pages fail with "not found".
 export async function findFacilityById(id) {
   const fb = FALLBACK.find((f) => f.id === id);
   if (fb) return fb;
+
+  const cached = await readFacilityFromDB(id);
+  if (cached) return cached;
 
   const m = String(id).match(/^osm-(node|way|relation)-(\d+)$/);
   if (!m) return null;
@@ -268,7 +319,9 @@ export async function findFacilityById(id) {
       if (!res.ok) continue;
       const json = await res.json();
       const el = json.elements?.[0];
-      return el ? transformOverpass(el) : null;
+      const facility = el ? transformOverpass(el) : null;
+      if (facility) await upsertFacility(facility).catch(() => {});
+      return facility;
     } catch {
       /* try next endpoint */
     }
@@ -344,13 +397,22 @@ export async function closeQueueSession(sessionId, checkOutAt, waitMinutes) {
 // Queue reports
 // ---------------------------------------------------------------------------
 
+// Keys must match PEOPLE_AHEAD_PRESETS in frontend/lib/queue/queueConstants.js.
+// They didn't before (few/some/many), so every report was stored with a NULL
+// congestion and the facility status never changed after submitting.
 const BUCKET_TO_WEIGHT = {
+  none: 1,
+  '1-4': 1,
+  '5-8': 2,
+  '9-12': 2,
+  '13-16': 3,
+  '16plus': 3,
   few: 1,
   some: 2,
   many: 3,
 };
 
-function congestionFromBucket(bucket, peopleAhead) {
+export function congestionFromBucket(bucket, peopleAhead) {
   const w = BUCKET_TO_WEIGHT[bucket];
   if (w != null) return w === 1 ? 'low' : w === 2 ? 'moderate' : 'high';
 
@@ -372,7 +434,7 @@ export async function createQueueReport({
   notes,
 }) {
   const facilityIntId = await upsertFacility(facility);
-  const congestion = congestionFromBucket(peopleAheadBucket);
+  const congestion = congestionFromBucket(peopleAheadBucket, peopleAhead);
 
   const { rows } = await pool.query(
     `INSERT INTO queue_reports
@@ -407,11 +469,26 @@ export async function findRecentQueueReports(externalId) {
        FROM queue_reports qr
        JOIN facilities f ON f.id = qr.facility_id
       WHERE f.external_id = $1
+        AND qr.created_at > now() - make_interval(hours => $2)
       ORDER BY qr.created_at DESC
       LIMIT 10`,
-    [externalId]
+    [externalId, QUEUE_WINDOW_HOURS]
   );
   return rows;
+}
+
+/** Average measured wait (check-in → check-out) over the recent window. */
+export async function findRecentAverageWait(externalId) {
+  const { rows } = await pool.query(
+    `SELECT ROUND(AVG(qs.wait_minutes)) AS avg_wait, COUNT(*) AS n
+       FROM queue_sessions qs
+       JOIN facilities f ON f.id = qs.facility_id
+      WHERE f.external_id = $1
+        AND qs.wait_minutes IS NOT NULL
+        AND qs.check_out_at > now() - make_interval(hours => $2)`,
+    [externalId, QUEUE_WINDOW_HOURS]
+  );
+  return Number(rows[0]?.n) > 0 ? Number(rows[0].avg_wait) : null;
 }
 
 export async function findQueueSummariesFor(externalIds) {
@@ -419,20 +496,34 @@ export async function findQueueSummariesFor(externalIds) {
   if (!externalIds?.length) return map;
 
   const { rows } = await pool.query(
-    `SELECT f.external_id,
-            COUNT(*) FILTER (WHERE qr.congestion IS NOT NULL) AS sample_size,
-            AVG(CASE qr.congestion
-                  WHEN 'low' THEN 1
-                  WHEN 'moderate' THEN 2
-                  WHEN 'high' THEN 3
-                END) AS avg_weight,
-            AVG(qr.wait_minutes) AS avg_wait_minutes,
-            MAX(qr.created_at)   AS last_reported_at
-       FROM queue_reports qr
-       JOIN facilities f ON f.id = qr.facility_id
-      WHERE f.external_id = ANY($1::text[])
-      GROUP BY f.external_id`,
-    [externalIds]
+    `WITH reports AS (
+       SELECT f.external_id,
+              COUNT(*) FILTER (WHERE qr.congestion IS NOT NULL) AS sample_size,
+              AVG(CASE qr.congestion
+                    WHEN 'low' THEN 1
+                    WHEN 'moderate' THEN 2
+                    WHEN 'high' THEN 3
+                  END) AS avg_weight,
+              MAX(qr.created_at) AS last_reported_at
+         FROM queue_reports qr
+         JOIN facilities f ON f.id = qr.facility_id
+        WHERE f.external_id = ANY($1::text[])
+          AND qr.created_at > now() - make_interval(hours => $2)
+        GROUP BY f.external_id
+     ),
+     waits AS (
+       SELECT f.external_id, ROUND(AVG(qs.wait_minutes)) AS avg_wait_minutes
+         FROM queue_sessions qs
+         JOIN facilities f ON f.id = qs.facility_id
+        WHERE f.external_id = ANY($1::text[])
+          AND qs.wait_minutes IS NOT NULL
+          AND qs.check_out_at > now() - make_interval(hours => $2)
+        GROUP BY f.external_id
+     )
+     SELECT r.*, w.avg_wait_minutes
+       FROM reports r
+       LEFT JOIN waits w USING (external_id)`,
+    [externalIds, QUEUE_WINDOW_HOURS]
   );
 
   for (const r of rows) {
@@ -441,7 +532,7 @@ export async function findQueueSummariesFor(externalIds) {
     map.set(r.external_id, {
       congestion: avg < 1.5 ? 'low' : avg < 2.5 ? 'moderate' : 'high',
       sampleSize: Number(r.sample_size),
-      avgWaitMinutes: r.avg_wait_minutes ? Number(r.avg_wait_minutes) : null,
+      avgWaitMinutes: r.avg_wait_minutes != null ? Number(r.avg_wait_minutes) : null,
       lastReportedAt: r.last_reported_at,
     });
   }

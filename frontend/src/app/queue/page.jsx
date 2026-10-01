@@ -19,7 +19,7 @@ function QueuePageInner() {
 
   if (!facilityId) {
     return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 p-6">
+      <div className="grid min-h-screen place-items-center bg-slate-100 p-6">
         <p className="text-sm text-slate-500">No facility specified.</p>
       </div>
     );
@@ -27,7 +27,7 @@ function QueuePageInner() {
 
   if (isPending) {
     return (
-      <div className="grid min-h-screen place-items-center bg-slate-50">
+      <div className="grid min-h-screen place-items-center bg-slate-100">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
       </div>
     );
@@ -35,7 +35,7 @@ function QueuePageInner() {
 
   if (error || !data) {
     return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 p-6">
+      <div className="grid min-h-screen place-items-center bg-slate-100 p-6">
         <p className="text-sm text-slate-500">
           {error?.message ?? 'Facility not found'}
         </p>
@@ -51,7 +51,7 @@ export default function QueuePage() {
   return (
     <Suspense
       fallback={
-        <div className="grid min-h-screen place-items-center bg-slate-50">
+        <div className="grid min-h-screen place-items-center bg-slate-100">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
         </div>
       }

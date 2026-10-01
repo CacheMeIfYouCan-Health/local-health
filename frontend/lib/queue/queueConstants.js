@@ -21,7 +21,8 @@ export const PEOPLE_AHEAD_PRESETS = [
 
 export const QUEUE_CONFIG = {
   staleAfterMs: 3 * 60 * 60 * 1000, // 3h — drop abandoned sessions
-  verifyRadiusMeters: 40000,
+  // How close counts as "at the facility". Was 40 km, which verified anyone in the city.
+  verifyRadiusMeters: Number(process.env.NEXT_PUBLIC_VERIFY_RADIUS_METERS) || 500,
   storageKey: 'queue.session.v1',
 };
 
