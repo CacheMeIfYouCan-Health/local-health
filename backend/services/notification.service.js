@@ -142,12 +142,12 @@ export async function notifyQuestionReply({ question, reply, forum }) {
 export async function notifyImportantUpdate({ forumId, summary }) {
   if (!pushEnabled) return;
   const { rows } = await pool.query(
-    `SELECT fm.user_id, f.external_id, f.name
+    `SELECT fm.user_id, fm.facility_id AS external_id,
+            COALESCE(f.name, 'a place you follow') AS name
        FROM forum_members fm
-       JOIN forums fo ON fo.id = fm.forum_id
-       JOIN facilities f ON f.id = fo.location_id
+       LEFT JOIN facilities f ON f.external_id = fm.facility_id
        LEFT JOIN notification_preferences np ON np.user_id = fm.user_id
-      WHERE fm.forum_id = $1
+      WHERE fm.facility_id = $1
         AND fm.notifications_enabled
         AND COALESCE(np.important_update_enabled, true)
         AND (np.last_important_notified_at IS NULL
@@ -192,18 +192,16 @@ export async function sendDueSummaryNotifications() {
   let notified = 0;
   for (const user of rows) {
     const { rows: fresh } = await pool.query(
-      `SELECT DISTINCT ON (fs.forum_id)
-              fs.forum_id, fs.summary, fs.message_count, fs.created_at,
-              f.external_id, f.name
+      `SELECT DISTINCT ON (fs.facility_id)
+              fs.facility_id AS external_id, fs.summary, fs.message_count, fs.created_at,
+              COALESCE(f.name, 'a place you follow') AS name
          FROM forum_summaries fs
-         JOIN forum_members fm ON fm.forum_id = fs.forum_id
-         JOIN forums fo ON fo.id = fs.forum_id
-         JOIN facilities f ON f.id = fo.location_id
+         JOIN forum_members fm ON fm.facility_id = fs.facility_id
+         LEFT JOIN facilities f ON f.external_id = fs.facility_id
         WHERE fm.user_id = $1
           AND fm.notifications_enabled
-          AND fs.channel = 'updates'
           AND fs.created_at > COALESCE($2, fm.joined_at)
-        ORDER BY fs.forum_id, fs.created_at DESC`,
+        ORDER BY fs.facility_id, fs.created_at DESC`,
       [user.user_id, user.last_ai_summary_notified_at]
     );
     if (fresh.length === 0) continue;

@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 
-const MAX = 1000;
+const MAX = 500; // matches the body CHECK in the database
 
 /**
  * Fixed bottom input. Returns focus to the field after sending and keeps the

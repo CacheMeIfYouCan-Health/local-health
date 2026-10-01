@@ -14,7 +14,8 @@ export function initRealtime(httpServer, origins) {
 
   io.on('connection', (socket) => {
     socket.on('forum:join', (forumId) => {
-      if (Number.isInteger(Number(forumId))) socket.join(forumRoom(forumId));
+      // A forum is a facility id such as osm-node-123 or fallback-4.
+      if (/^[a-z0-9-]{1,64}$/i.test(String(forumId))) socket.join(forumRoom(forumId));
     });
     socket.on('forum:leave', (forumId) => {
       socket.leave(forumRoom(forumId));

@@ -1,11 +1,11 @@
 import {
   FORUM_CONFIG,
-  findOrCreateForumForLocation,
-  findForumById,
-  listMessages,
-  createMessage,
+  findForum,
+  listUpdates,
+  listQuestions,
+  createUpdate,
+  createQuestion,
   findQuestion,
-  softDeleteMessage,
   listReplies,
   createReply,
   findMembership,
@@ -35,9 +35,9 @@ function readContent(body) {
   return content;
 }
 
-async function loadForum(forumId) {
-  const forum = await findForumById(forumId);
-  if (!forum) throw notFound('Forum not found');
+async function loadForum(facilityId) {
+  const forum = await findForum(facilityId);
+  if (!forum) throw notFound('Location not found');
   return forum;
 }
 
@@ -51,103 +51,52 @@ function publicForum(forum, membership) {
   };
 }
 
-/** GET /api/forums/location/:locationId — map pin → forum + recent activity */
-export async function getForumForLocation(req, res) {
-  const forum = await findOrCreateForumForLocation(req.validated.id);
-  if (!forum) throw notFound('Location not found');
+// Posting automatically follows the forum so replies and summaries reach
+// the people taking part. They can still leave from the menu.
+async function autoJoin(facilityId, userId) {
+  if (!(await findMembership(facilityId, userId))) await joinForum(facilityId, userId);
+}
 
+/** GET /api/forums/location/:id — map pin → forum + recent activity */
+export async function getForumForLocation(req, res) {
+  const forum = await loadForum(req.validated.id);
   const [membership, updates, questions, summary] = await Promise.all([
     findMembership(forum.id, req.userId),
-    listMessages(forum.id, 'updates'),
-    listMessages(forum.id, 'questions'),
-    latestSummary(forum.id, 'updates'),
+    listUpdates(forum.id),
+    listQuestions(forum.id),
+    latestSummary(forum.id),
   ]);
-
-  res.json({
-    forum: publicForum(forum, membership),
-    updates,
-    questions,
-    summary,
-  });
+  res.json({ forum: publicForum(forum, membership), updates, questions, summary });
 }
 
-/** GET /api/forums/:forumId */
-export async function getForum(req, res) {
-  const forum = await loadForum(req.params.forumId);
-  const membership = await findMembership(forum.id, req.userId);
-  res.json({ forum: publicForum(forum, membership) });
-}
-
-/** GET /api/forums/:forumId/messages?channel=updates|questions&before=<id> */
-export async function getMessages(req, res) {
-  const channel = req.query.channel === 'questions' ? 'questions' : 'updates';
-  const before = req.query.before && /^\d+$/.test(req.query.before) ? req.query.before : null;
-  const forum = await loadForum(req.params.forumId);
-  res.json({ messages: await listMessages(forum.id, channel, { before }) });
-}
-
-/** GET /api/forums/:forumId/questions */
-export async function getQuestions(req, res) {
-  const forum = await loadForum(req.params.forumId);
-  res.json({ questions: await listMessages(forum.id, 'questions') });
-}
-
-// Posting automatically follows the forum, so replies and summaries reach
-// the people taking part. They can still leave from the menu.
-async function autoJoin(forumId, userId) {
-  if (!(await findMembership(forumId, userId))) await joinForum(forumId, userId);
-}
-
-/** POST /api/forums/:forumId/messages — an Update; location verified here */
+/** POST /api/forums/:id/messages — an Update; location verified here */
 export async function postUpdate(req, res) {
   const content = readContent(req.body);
-  const forum = await loadForum(req.params.forumId);
+  const forum = await loadForum(req.validated.id);
 
   // The client sends its coordinates once; only the yes/no result is stored.
   const locationVerified = isWithinFacility(forum, req.body.latitude, req.body.longitude);
-
-  const message = await createMessage({
-    forumId: forum.id,
+  const message = await createUpdate({
+    facilityId: forum.id,
     userId: req.userId,
-    channel: 'updates',
     content,
     locationVerified,
   });
   await autoJoin(forum.id, req.userId);
 
-  emitToForum(forum.id, 'message:new', message);
+  emitToForum(forum.id, 'message:new', message); // after the DB write
   res.status(201).json({ message });
 }
 
-/** POST /api/forums/:forumId/questions — no location verification */
+/** POST /api/forums/:id/questions — no location verification */
 export async function postQuestion(req, res) {
   const content = readContent(req.body);
-  const forum = await loadForum(req.params.forumId);
-
-  const message = await createMessage({
-    forumId: forum.id,
-    userId: req.userId,
-    channel: 'questions',
-    content,
-    locationVerified: false,
-  });
+  const forum = await loadForum(req.validated.id);
+  const message = await createQuestion({ facilityId: forum.id, userId: req.userId, content });
   await autoJoin(forum.id, req.userId);
 
   emitToForum(forum.id, 'message:new', message);
   res.status(201).json({ message });
-}
-
-/** DELETE /api/forums/:forumId/messages/:messageId — author soft-deletes */
-export async function deleteMessage(req, res) {
-  const deleted = await softDeleteMessage(req.params.messageId, req.userId);
-  if (!deleted || String(deleted.forum_id) !== req.params.forumId) {
-    throw notFound('Message not found');
-  }
-  emitToForum(deleted.forum_id, 'message:deleted', {
-    id: String(deleted.id),
-    channel: deleted.channel,
-  });
-  res.json({ ok: true });
 }
 
 /** GET /api/questions/:questionId/replies */
@@ -174,33 +123,26 @@ export async function postReply(req, res) {
   emitToForum(question.forumId, 'reply:new', { questionId: question.id, reply, replyCount });
   res.status(201).json({ reply, replyCount });
 
-  // After responding: a slow push service must not delay the reply.
-  findForumById(question.forumId)
+  // After responding, so a slow push service can't delay the reply.
+  findForum(question.forumId)
     .then((forum) => notifyQuestionReply({ question, reply, forum }))
     .catch((err) => console.warn('[push] reply notification failed:', err.message));
 }
 
-/** POST /api/forums/:forumId/join */
+/** POST /api/forums/:id/join */
 export async function postJoin(req, res) {
-  const forum = await loadForum(req.params.forumId);
+  const forum = await loadForum(req.validated.id);
   const enabled =
     typeof req.body?.notificationsEnabled === 'boolean' ? req.body.notificationsEnabled : null;
   const membership = await joinForum(forum.id, req.userId, enabled);
   res.json({ forum: publicForum(forum, membership) });
 }
 
-/** POST /api/forums/:forumId/leave — stop following; the forum stays */
+/** POST /api/forums/:id/leave — stop following; the forum stays */
 export async function postLeave(req, res) {
-  const forum = await loadForum(req.params.forumId);
+  const forum = await loadForum(req.validated.id);
   await leaveForum(forum.id, req.userId);
   res.json({ forum: publicForum(forum, null) });
-}
-
-/** GET /api/forums/:forumId/summary?channel=updates */
-export async function getSummary(req, res) {
-  const channel = req.query.channel === 'questions' ? 'questions' : 'updates';
-  const forum = await loadForum(req.params.forumId);
-  res.json({ summary: await latestSummary(forum.id, channel) });
 }
 
 /** GET /api/notifications/preferences */
