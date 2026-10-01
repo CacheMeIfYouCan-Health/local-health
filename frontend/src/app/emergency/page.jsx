@@ -1,68 +1,10 @@
-'use client';
-
-import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
+import EmergencyClient from './EmergencyClient';
 
 export default function EmergencyPage() {
-  const router = useRouter();
-  const params = useSearchParams();
-
-  const facilityName = params.get('name') ?? 'Emergency services';
-  const phoneNumber = params.get('phone') ?? '10177';
-
-  const [confirming, setConfirming] = useState(false);
-  const clean = phoneNumber.replace(/\s+/g, '');
-
-  // Auto-open the confirmation dialog on load
-  useEffect(() => {
-    setConfirming(true);
-  }, []);
-
-  const call = () => {
-    window.location.href = `tel:${clean}`;
-  };
-
   return (
-    <div className="grid min-h-screen place-items-center bg-slate-50 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-full bg-red-100 text-lg">
-            📞
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900">
-              Call emergency line
-            </p>
-            <p className="truncate text-xs text-slate-500">{facilityName}</p>
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-xl bg-slate-50 p-4 text-center">
-          <p className="text-3xl font-bold tracking-wider text-slate-900">
-            {clean}
-          </p>
-        </div>
-
-        <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">
-          Your phone's dialler will open with this number ready. You still need
-          to press call to connect.
-        </p>
-
-        <div className="mt-5 flex gap-2">
-          <button
-            onClick={() => router.back()}
-            className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={call}
-            className="flex-1 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white"
-          >
-            Open dialler
-          </button>
-        </div>
-      </div>
-    </div>
+    <Suspense fallback={<div className="grid min-h-screen place-items-center bg-slate-50">Loading…</div>}>
+      <EmergencyClient />
+    </Suspense>
   );
 }
