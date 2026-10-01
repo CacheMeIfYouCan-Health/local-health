@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import useQueueSession from '@lib/queue/useQueueSession';
 import QueueReportForm from './QueueReportForm';
 import { formatDuration, formatClock } from '@lib/queue/time';
@@ -79,6 +79,7 @@ export default function QueueScreen({ facility }) {
   const [mode, setMode] = useState('overview'); // 'overview' | 'checkin' | 'report'
   const [summaryMinutes, setSummaryMinutes] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
+  const router = useRouter();
 
   const busy = status === 'checking_in' || status === 'checking_out';
 
@@ -226,13 +227,14 @@ export default function QueueScreen({ facility }) {
 
   return (
     <main className="mx-auto max-w-md px-5 pb-24 pt-6">
-      <header className="mb-5">
-        <Link
-          href="/"
+        <header className="mb-5">
+        <button
+          type="button"
+          onClick={() => router.back()}
           className="inline-block py-2 text-[15px] font-semibold text-emerald-600"
         >
           ← Back
-        </Link>
+        </button>
         <h1 className="mt-1 text-[22px] font-bold leading-tight text-gray-900">
           {facility.name}
         </h1>

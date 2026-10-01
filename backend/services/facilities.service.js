@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import pool from '../lib/db.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FALLBACK_PATH = path.join(here, '..', 'data', 'facilities-fallback.json');
@@ -17,6 +18,7 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 const FALLBACK_TTL_MS = 60 * 1000;
 const MIN_INTERVAL_MS = 3000;
 const OVERPASS_TIMEOUT_MS = 12_000;
+const CACHE_TTL_DAYS = 7;
 
 const cache = new Map();
 let lastCallAt = 0;
@@ -38,6 +40,26 @@ function distanceKm(lat1, lng1, lat2, lng2) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+function bbox({ lat, lng, radiusKm }) {
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
+  return {
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+    minLng: lng - lngDelta,
+    maxLng: lng + lngDelta,
+  };
+}
+
+function bboxKey({ lat, lng, radiusKm }) {
+  const r = (n) => Math.round(n * 100) / 100;
+  return `${r(lat)}|${r(lng)}|${r(radiusKm)}`;
+}
+
+function cacheKey({ lat, lng, radiusKm }) {
+  return `${lat.toFixed(2)}|${lng.toFixed(2)}|${radiusKm}`;
 }
 
 function buildQuery({ lat, lng, radiusKm }) {
@@ -125,10 +147,6 @@ function transformOverpass(element) {
   };
 }
 
-function cacheKey({ lat, lng, radiusKm }) {
-  return `${lat.toFixed(2)}|${lng.toFixed(2)}|${radiusKm}`;
-}
-
 async function getElements({ lat, lng, radiusKm }) {
   const key = cacheKey({ lat, lng, radiusKm });
   const hit = cache.get(key);
@@ -143,24 +161,84 @@ async function getElements({ lat, lng, radiusKm }) {
   return stored;
 }
 
-export async function findNearbyFacilities({ lat, lng, radiusKm, limit, type }) {
-  const { elements, source } = await getElements({ lat, lng, radiusKm });
+// ---------------------------------------------------------------------------
+// Nearby: DB cache first, Overpass on miss
+// ---------------------------------------------------------------------------
 
-  const pool =
-    source === 'overpass'
-      ? elements.map(transformOverpass).filter(Boolean)
-      : FALLBACK;
+async function readFacilitiesFromDB({ lat, lng, radiusKm, limit, type }) {
+  const { minLat, maxLat, minLng, maxLng } = bbox({ lat, lng, radiusKm });
+  const { rows } = await pool.query(
+    `SELECT external_id AS id, name, type, address, phone, emergency_phone,
+            latitude, longitude, operating_hours, services
+       FROM facilities
+      WHERE latitude  BETWEEN $1 AND $2
+        AND longitude BETWEEN $3 AND $4`,
+    [minLat, maxLat, minLng, maxLng]
+  );
 
   const out = [];
-  for (const f of pool) {
+  for (const f of rows) {
     if (type && f.type !== type) continue;
     const d = distanceKm(lat, lng, f.latitude, f.longitude);
     if (d > radiusKm) continue;
     out.push({ ...f, distance_km: Number(d.toFixed(2)) });
   }
-
   out.sort((a, b) => a.distance_km - b.distance_km);
-  console.log(`[facilities] served ${out.length} from ${source}`);
+  return out.slice(0, limit);
+}
+
+async function isRegionFresh(key) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM nearby_cache
+      WHERE bbox_key = $1
+        AND fetched_at > now() - ($2 || ' days')::interval`,
+    [key, CACHE_TTL_DAYS]
+  );
+  return rows.length > 0;
+}
+
+async function markRegionFresh(key) {
+  await pool.query(
+    `INSERT INTO nearby_cache (bbox_key, fetched_at)
+     VALUES ($1, now())
+     ON CONFLICT (bbox_key) DO UPDATE SET fetched_at = now()`,
+    [key]
+  );
+}
+
+export async function findNearbyFacilities({ lat, lng, radiusKm, limit, type }) {
+  const key = bboxKey({ lat, lng, radiusKm });
+
+  if (await isRegionFresh(key)) {
+    const rows = await readFacilitiesFromDB({ lat, lng, radiusKm, limit, type });
+    console.log(`[facilities] served ${rows.length} from DB cache`);
+    return rows;
+  }
+
+  const { elements, source } = await getElements({ lat, lng, radiusKm });
+  const fetched =
+    source === 'overpass'
+      ? elements.map(transformOverpass).filter(Boolean)
+      : FALLBACK;
+
+  for (const f of fetched) {
+    try {
+      await upsertFacility(f);
+    } catch (err) {
+      console.warn(`[facilities] upsert failed for ${f.id}:`, err.message);
+    }
+  }
+  await markRegionFresh(key);
+
+  const out = [];
+  for (const f of fetched) {
+    if (type && f.type !== type) continue;
+    const d = distanceKm(lat, lng, f.latitude, f.longitude);
+    if (d > radiusKm) continue;
+    out.push({ ...f, distance_km: Number(d.toFixed(2)) });
+  }
+  out.sort((a, b) => a.distance_km - b.distance_km);
+  console.log(`[facilities] served ${out.length} from ${source} (fresh → cached)`);
   return out.slice(0, limit);
 }
 
@@ -199,71 +277,77 @@ export async function findFacilityById(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Queue sessions (in-memory for now — replace with DB queries later)
+// Queue sessions
 // ---------------------------------------------------------------------------
 
-const sessions = new Map(); // sessionId -> session row
-let sessionCounter = 0;
-
 export async function createQueueSession({
-  facilityId,
+  facility,
   queueType,
   peopleAhead,
   peopleAheadBucket,
   locationVerified,
 }) {
-  sessionCounter += 1;
-  const sessionId = `sess-${Date.now()}-${sessionCounter}`;
-  const row = {
-    sessionId,
-    facilityId,
-    queueType,
-    peopleAhead,
-    peopleAheadBucket,
-    locationVerified,
-    checkInAt: new Date().toISOString(),
-  };
-  sessions.set(sessionId, row);
-  return row;
+  const facilityIntId = await upsertFacility(facility);
+  const sessionId = `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const { rows } = await pool.query(
+    `INSERT INTO queue_sessions
+       (session_id, facility_id, queue_type, people_ahead,
+        people_ahead_bucket, location_verified, check_in_at, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6, now(), now())
+     RETURNING session_id, facility_id, queue_type, people_ahead,
+               people_ahead_bucket, location_verified, check_in_at, check_out_at, wait_minutes`,
+    [
+      sessionId,
+      facilityIntId,
+      queueType ?? null,
+      peopleAhead ?? null,
+      peopleAheadBucket ?? null,
+      !!locationVerified,
+    ]
+  );
+  return rows[0];
 }
 
 export async function findQueueSessionById(sessionId) {
-  const row = sessions.get(sessionId);
-  if (!row) return null;
-  // Controller expects snake_case-ish shape: session.facility_id, session.check_in_at
-  return {
-    sessionId: row.sessionId,
-    facility_id: row.facilityId,
-    queue_type: row.queueType,
-    people_ahead: row.peopleAhead,
-    people_ahead_bucket: row.peopleAheadBucket,
-    location_verified: row.locationVerified,
-    check_in_at: row.checkInAt,
-    check_out_at: null,
-    wait_minutes: null,
-  };
+  const { rows } = await pool.query(
+    `SELECT qs.session_id,
+            qs.facility_id,
+            f.external_id AS facility_external_id,
+            qs.queue_type,
+            qs.people_ahead,
+            qs.people_ahead_bucket,
+            qs.location_verified,
+            qs.check_in_at,
+            qs.check_out_at,
+            qs.wait_minutes
+       FROM queue_sessions qs
+       LEFT JOIN facilities f ON f.id = qs.facility_id
+      WHERE qs.session_id = $1`,
+    [sessionId]
+  );
+  return rows[0] ?? null;
 }
 
 export async function closeQueueSession(sessionId, checkOutAt, waitMinutes) {
-  const row = sessions.get(sessionId);
-  if (!row) return null;
-  row.checkOutAt = checkOutAt.toISOString();
-  row.waitMinutes = waitMinutes;
-  return row;
+  const { rows } = await pool.query(
+    `UPDATE queue_sessions
+        SET check_out_at = $2, wait_minutes = $3
+      WHERE session_id = $1
+      RETURNING session_id, facility_id, check_in_at, check_out_at, wait_minutes`,
+    [sessionId, checkOutAt, waitMinutes]
+  );
+  return rows[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------
-// Queue reports (in-memory for now — swap for DB later)
+// Queue reports
 // ---------------------------------------------------------------------------
 
-const reports = []; // newest first
-let reportCounter = 0;
-const REPORTS_PER_FACILITY = 20; // how many recent reports to keep per facility
-
 const BUCKET_TO_WEIGHT = {
-  few: 1,      // low
-  some: 2,     // moderate
-  many: 3,     // high
+  few: 1,
+  some: 2,
+  many: 3,
 };
 
 function congestionFromBucket(bucket) {
@@ -273,58 +357,138 @@ function congestionFromBucket(bucket) {
 }
 
 export async function createQueueReport({
-  facilityId,
+  facility,
   queueType,
   peopleAhead,
   peopleAheadBucket,
   locationVerified,
+  notes,
 }) {
-  reportCounter += 1;
-  const row = {
-    id: `rep-${Date.now()}-${reportCounter}`,
-    facility_id: facilityId,
-    queue_type: queueType ?? null,
-    people_ahead: peopleAhead ?? null,
-    people_ahead_bucket: peopleAheadBucket ?? null,
-    location_verified: !!locationVerified,
-    congestion: congestionFromBucket(peopleAheadBucket),
-    created_at: new Date().toISOString(),
-  };
-  reports.unshift(row);
-  // Trim old reports per facility
-  let seen = 0;
-  for (let i = 0; i < reports.length; i++) {
-    if (reports[i].facility_id === facilityId) {
-      seen++;
-      if (seen > REPORTS_PER_FACILITY) {
-        reports.splice(i, 1);
-        i--;
-      }
-    }
-  }
-  return row;
+  const facilityIntId = await upsertFacility(facility);
+  const congestion = congestionFromBucket(peopleAheadBucket);
+
+  const { rows } = await pool.query(
+    `INSERT INTO queue_reports
+       (facility_id, queue_length, wait_minutes, congestion,
+        service_type, notes, location_verified, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+     RETURNING *`,
+    [
+      facilityIntId,
+      peopleAhead ?? null,
+      null,
+      congestion,
+      queueType ?? null,
+      notes ?? null,
+      !!locationVerified,
+    ]
+  );
+
+  return rows[0];
 }
 
-export async function findRecentQueueReports(facilityId) {
-  return reports.filter((r) => r.facility_id === facilityId).slice(0, 10);
+export async function findRecentQueueReports(externalId) {
+  const { rows } = await pool.query(
+    `SELECT qr.id,
+            qr.queue_length   AS people_ahead,
+            qr.wait_minutes,
+            qr.congestion,
+            qr.service_type   AS queue_type,
+            qr.notes,
+            qr.location_verified,
+            qr.created_at
+       FROM queue_reports qr
+       JOIN facilities f ON f.id = qr.facility_id
+      WHERE f.external_id = $1
+      ORDER BY qr.created_at DESC
+      LIMIT 10`,
+    [externalId]
+  );
+  return rows;
 }
 
-export async function findQueueSummariesFor(facilityIds) {
+export async function findQueueSummariesFor(externalIds) {
   const map = new Map();
-  for (const id of facilityIds) {
-    const recent = reports.filter((r) => r.facility_id === id).slice(0, 10);
-    if (recent.length === 0) continue;
-    const scored = recent.filter((r) => r.congestion);
-    if (scored.length === 0) continue;
-    const weights = { low: 1, moderate: 2, high: 3 };
-    const avg =
-      scored.reduce((s, r) => s + weights[r.congestion], 0) / scored.length;
-    map.set(id, {
+  if (!externalIds?.length) return map;
+
+  const { rows } = await pool.query(
+    `SELECT f.external_id,
+            COUNT(*) FILTER (WHERE qr.congestion IS NOT NULL) AS sample_size,
+            AVG(CASE qr.congestion
+                  WHEN 'low' THEN 1
+                  WHEN 'moderate' THEN 2
+                  WHEN 'high' THEN 3
+                END) AS avg_weight,
+            AVG(qr.wait_minutes) AS avg_wait_minutes,
+            MAX(qr.created_at)   AS last_reported_at
+       FROM queue_reports qr
+       JOIN facilities f ON f.id = qr.facility_id
+      WHERE f.external_id = ANY($1::text[])
+      GROUP BY f.external_id`,
+    [externalIds]
+  );
+
+  for (const r of rows) {
+    if (Number(r.sample_size) === 0) continue;
+    const avg = Number(r.avg_weight);
+    map.set(r.external_id, {
       congestion: avg < 1.5 ? 'low' : avg < 2.5 ? 'moderate' : 'high',
-      sampleSize: scored.length,
-      avgWaitMinutes: null, // we don't know real wait time from a quick report
-      lastReportedAt: recent[0].created_at,
+      sampleSize: Number(r.sample_size),
+      avgWaitMinutes: r.avg_wait_minutes ? Number(r.avg_wait_minutes) : null,
+      lastReportedAt: r.last_reported_at,
     });
   }
   return map;
+}
+
+// ---------------------------------------------------------------------------
+// Facility upsert
+// ---------------------------------------------------------------------------
+
+export async function upsertFacility(facility) {
+  const {
+    id: externalId,
+    name,
+    type,
+    address,
+    phone,
+    emergency_phone,
+    latitude,
+    longitude,
+    operating_hours,
+    services,
+  } = facility;
+
+  const { rows } = await pool.query(
+    `INSERT INTO facilities
+       (external_id, name, type, address, phone, emergency_phone,
+        latitude, longitude, operating_hours, services, cached_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now(), now())
+     ON CONFLICT (external_id) DO UPDATE SET
+       name = EXCLUDED.name,
+       type = EXCLUDED.type,
+       address = EXCLUDED.address,
+       phone = EXCLUDED.phone,
+       emergency_phone = EXCLUDED.emergency_phone,
+       latitude = EXCLUDED.latitude,
+       longitude = EXCLUDED.longitude,
+       operating_hours = EXCLUDED.operating_hours,
+       services = EXCLUDED.services,
+       cached_at = now(),
+       updated_at = now()
+     RETURNING id`,
+    [
+      externalId,
+      name,
+      type,
+      address,
+      phone,
+      emergency_phone,
+      latitude,
+      longitude,
+      operating_hours ? JSON.stringify(operating_hours) : null,
+      services ?? [],
+    ]
+  );
+  return rows[0].id;
 }
